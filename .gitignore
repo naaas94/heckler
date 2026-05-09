@@ -61,3 +61,4 @@ Desktop.ini
 *.log
 *.tmp
 *.temp
+logs/
