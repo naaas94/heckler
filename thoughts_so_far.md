@@ -1,9 +1,10 @@
-
-- sqlite for all
-    - db for persistance
-    - db for obvs, monitoring, eval - all wired via sqlite to a local db
-    - for analytics and eval surface to wire to langfuse and langsmith to work on prompts and funiness definition
-    - store everything
+- this ran but we need to decompose the json and telemetry into tables and fields for post hoc analysis 
+    - sqlite for all
+        - db for persistance
+        - db for obvs, monitoring, eval - all wired via sqlite to a local db
+        - for analytics and eval surface to wire to langfuse and langsmith to work on prompts and funiness definition
+        - store everything
+        
 
 
 
@@ -47,3 +48,4 @@
 
 - for prompt engineering insights and nuggets; go back to roast session conv w claude and extract from there
 
+- lower the cooldown

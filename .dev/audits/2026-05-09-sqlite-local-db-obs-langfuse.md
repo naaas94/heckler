@@ -1,10 +1,11 @@
 # Audit — sqlite-local-db-obs-langfuse
 
-**Audit document version:** 1.0  
-**Date:** 2026-05-09  
+**Audit document version:** 2.0  
+**Date:** 2026-05-09 (re-run)  
 **Plan:** `.dev/plans/sqlite-local-db-obs-langfuse/plan.md` **v1.1.0**  
 **Context map:** `.dev/plans/sqlite-local-db-obs-langfuse/context-map.md`  
-**Auditor focus (Phase 4):** **Integration seams** (reactor → `tracing_context` → `HecklerLogger` → `event_store`; pipeline call order), **failure paths** (SQLite insert errors, LLM exceptions, correlation lifecycle), **regression surface** (committed tree vs narrated “landed” state).
+**Repository at audit:** **`0ea0f4efd2bc903b4706db7d97129fa1e441a859`** (`sqlite`); working tree **clean** (`master...origin/master`).  
+**Auditor focus (Phase 4):** **Integration seams** (reactor → `tracing_context` → `HecklerLogger` → `event_store`; pipeline call order), **failure paths** (SQLite insert errors, LLM exceptions, correlation lifecycle), **regression surface** (committed tree vs §2 *Landed*).
 
 ---
 
@@ -16,10 +17,11 @@
 | **Plan version** | 1.1.0 |
 | **Context map path** | `.dev/plans/sqlite-local-db-obs-langfuse/context-map.md` |
 | **Readiness verdict (planning time)** | READY |
-| **Provenance check (commits)** | Context map records scout SHA **`0afd022fc5c9b83872a3bc6b015aa6627eed6ee5`**; plan §8 records post-execution **`b9b24afb09280787e41d42302d4c613d2f81cbd6`**. These differ. For **`heckler/**` paths listed in the context map §File map, `git diff 0afd022..b9b24af -- heckler/` is **empty** — committed package source at HEAD matches scout-time content for those paths. |
-| **Working tree at audit** | **Dirty:** modified `heckler/config.py`, `heckler/logger.py`, `heckler/reactor.py`, `tests/*`, `README.md`, `CHANGELOG.MD`, `.env.example`, `.dev/plans/.../plan.md`, `thoughts_so_far.md`; untracked `heckler/event_store.py`, `heckler/tracing_context.py`, `tests/test_event_store.py`, `scripts/`, `.dev/decision-logs/T12.md`–`T15.md`. |
-| **Tests run** | `python -m pytest tests -q` → **113 passed** (against **working tree** code, not necessarily `git show HEAD:`). |
-| **Phase 0 ordering note** | The full plan and changelog were consulted in one session with code; **cold-read findings were pinned from code + §1–§2 contracts** before Phase 1 narrative reconciliation. Strict “no plan prose beyond §1–§2 before Phase 0” was not isolated as a separate read pass. |
+| **Provenance check (commits)** | Context map records scout SHA **`0afd022fc5c9b83872a3bc6b015aa6627eed6ee5`**. Audit **`HEAD`** is **`0ea0f4efd2bc903b4706db7d97129fa1e441a859`**. Plan §8 cites post-execution **`b9b24afb09280787e41d42302d4c613d2f81cbd6`** — that commit is an **ancestor** of **`HEAD`** but **does not** contain **`heckler/event_store.py`** (SQLite landed in **`0ea0f4e`**). |
+| **File-map drift (map SHA → HEAD)** | Diverged paths: **`heckler/config.py`**, **`heckler/logger.py`**, **`heckler/reactor.py`**, **`tests/test_context_buffer_and_logger.py`**, **`tests/test_models.py`**, **`tests/test_reactor.py`**. Other §File map rows unchanged between **`0afd022`** and **`HEAD`** for the enumerated paths. New modules **`heckler/event_store.py`**, **`heckler/tracing_context.py`**, **`tests/test_event_store.py`**, **`scripts/import_legacy_jsonl.py`** are **plan-predicted additions**, not scout rows. |
+| **Working tree at audit** | **Clean** (no dirty-path caveat vs v1.0 audit). |
+| **Tests run** | `python -m pytest tests -q` → **113 passed** (against **`HEAD`**). |
+| **Phase 0 ordering note** | Cold-read items were pinned from **§1 task statement + §2 contracts + `HEAD` code/tests** before narrative reconciliation; strict isolation of “no plan prose beyond §1–§2” was not a separate filesystem read pass. |
 
 ---
 
@@ -28,17 +30,18 @@
 | Check | Result |
 |--------|--------|
 | **Context map path + verdict** | Present; **READY** (see map header). |
-| **SHA comparison (map vs HEAD)** | **Diverged commits** (`0afd022` ≠ `b9b24af`). **File-level:** between those two SHAs, **no** changes under `heckler/` per `git diff --name-only 0afd022 b9b24af -- heckler/`. Staleness of *scout predictions against the map’s own snapshot* for `heckler/*.py` is therefore **not** triggered by commit-to-commit drift on those paths. |
-| **Working tree vs HEAD** | **Large drift:** SQLite implementation, new modules, tests, scripts, and decision logs exist in the **working tree** but **`git ls-tree HEAD heckler/`** does **not** list `event_store.py` or `tracing_context.py`; **`git show HEAD:heckler/logger.py`** still shows JSONL + `_coerce_json`. |
-| **Scout working tree (map header)** | **dirty** — `thoughts_so_far.md` only (in-scope for “not runtime” caveat). |
-| **Audit-time dirty paths** | Broader than scout: all implementation and doc paths above. **Dirty-state caveat** applies to any finding that assumes these paths are identical to a clean commit. |
-| **Scout grep coverage vs plan §5.4** | Plan §5.4 asks to disprove duplicate instrumentation via grep for **`callback`**, **`langfuse`** outside `reactor`. Map §Coupling surfaces lists `langfuse` in a bundle pattern but does **not** record a dedicated **`callback`** / **`litellm.success_callback`** (or similar) pattern row. → **`scout-incomplete`** (minor, process feedback to pre-plan-exploration). |
+| **SHA comparison (map header vs `HEAD`)** | **Diverged** (`0afd022` ≠ `0ea0f4e`). Expected: scout snapshot predates SQLite implementation. File-map rows that changed are listed in §1 metadata; scout predictions on those paths are **stale-qualified** (implementation intentionally supersedes pre-plan inventory). |
+| **Plan §8 SHA vs SQLite tree** | **`b9b24af`** does **not** include **`heckler/event_store.py`**. **`HEAD`** does. Treat plan §8 “tree SHA at plan closure” as **stale for SQLite file presence** unless amended to **`0ea0f4e`** (or later). |
+| **Scout working tree (map header)** | **dirty** — `thoughts_so_far.md` only (out of package scope; same as v1). |
+| **Audit-time working tree** | **Clean** — no **dirty-state caveat** on implementation files. |
+| **Scout grep coverage vs plan §5.4** | Plan §5.4 asks to disprove duplicate instrumentation via grep for **`callback`**, **`langfuse`** outside **`reactor`**. Map §Coupling surfaces bundles `langfuse` in a pattern row but does **not** record an explicit standalone **`callback`** / global LiteLLM hook pattern row. → **`scout-incomplete`** (minor, pre-plan feedback). |
 
 **Phase 0.5 findings filed here**
 
 | ID | Type | Severity | Note |
 |----|------|----------|------|
 | P1 | `scout-incomplete` | minor | §5.4 duplicate-root disproof vocabulary not fully mirrored in map’s “Grep patterns checked” list (`callback` / global LiteLLM hook patterns). |
+| D1 | `process-violation` | minor | Plan §8 **`b9b24af`** anchor predates the commit that introduces **`event_store` / SQLite logger**; use **`0ea0f4e`** (or current **`HEAD`**) for “sqlite landed” provenance (orchestrator handoff doc). |
 
 ---
 
@@ -50,25 +53,25 @@
 | Pre-plan analysis (`thoughts_so_far.md` etc.) | **Not** used as primary input |
 | Orchestrator plan | **Provided** (full `plan.md`) |
 | Shared contracts (§2) | **Provided** |
-| Decision logs T12–T15 | **Provided** (in working tree; **untracked** in git) |
+| Decision logs T12–T15 | **Provided** (tracked under `.dev/decision-logs/`) |
 | Changelog (`CHANGELOG.MD` sqlite section) | **Provided** |
-| Codebase | **Working tree** read for implementation; **HEAD commit** spot-checked for closure SHA honesty |
+| Codebase | **`HEAD`** (`0ea0f4e`) |
 | Tests | **Provided** + pytest executed |
 
-**Limitation:** Auditing “merge readiness” against **`b9b24afb09280787e41d42302d4c613d2f81cbd6`** as the **sole** source of truth would **fail** — that commit does not contain the SQLite migration. Evidence below under **F1**.
+**Resolved vs v1.0:** **`HEAD`** now contains SQLite-only **`HecklerLogger`**, **`event_store`**, **`tracing_context`**, reactor metadata/correlation, and **`scripts/import_legacy_jsonl.py`**. The v1.0 **F1** git mismatch is **closed**.
 
 ---
 
 ## 4. Cold-read log (Phase 0)
 
-Pinned from **task statement + §2 contracts + working-tree code/tests** (minimal narrative priming):
+Pinned from **task statement + §2 contracts + `HEAD` code/tests**:
 
-1. **`heckler/logger.py` (working tree):** Single insert path using `json.dumps(serialize_heckle_event(...))` + optional `correlation_json`; errors logged at ERROR and re-raised; `finally` clears correlation — matches §2 error envelope and correlation lifecycle intent.
-2. **`heckler/reactor.py`:** `clear_correlation()` before completion; on API exception, clear and return `LLM_ERROR`; on success, derive flat string correlation from response primitives only; optional `metadata` only when env gates pass — aligns with §2 “no duplicate global callbacks” direction.
-3. **`heckler/event_store.py`:** WAL + `check_same_thread=False` + connect `timeout=30`; `init_schema` version gate — consistent with T12 narrative.
-4. **`tracing_context.py`:** `threading.local` — matches plan; **not** `contextvars` (plan allowed either).
-5. **Risk (integration):** `Reactor.react` leaves correlation set on the worker thread after a **successful HTTP response** until `HecklerLogger.log_event` runs; the pipeline’s reaction worker always calls `log_event` on discard/success paths in the happy path, and the next `react()` clears at entry — **acceptable** if `log_event` is never skipped between them (see Phase 4). Worker-wide `except Exception` without `log_event` could skip logging but next `react` still clears — **low** orphan-correlation risk.
-6. **Git vs tree mismatch (cold):** New package files and logger rewrite are **not** in `git ls-tree HEAD heckler/` — **merge / release blocker** if maintainers believe §8 closure SHA is the shipped tree.
+1. **`heckler/logger.py`:** Inserts via **`serialize_heckle_event`** → **`json.dumps`**, optional **`correlation_json`** from **`tracing_context`**; insert failures log **ERROR** and **re-raise**; **`finally: clear_correlation()`** — matches §2 error envelope and correlation lifecycle.
+2. **`heckler/reactor.py`:** **`clear_correlation()`** before **`litellm.completion`**; on API exception, clear and **`LLM_ERROR`** tuple unchanged; on success, primitive-only correlation; **`metadata`** only when hosted observability env active — aligns with §2.
+3. **`heckler/event_store.py`:** WAL, busy timeout, **`check_same_thread=False`**, schema version gate — consistent with T12.
+4. **`heckler/tracing_context.py`:** **`threading.local`** — within plan allowance (thread-local or contextvar).
+5. **`heckler/config.py`:** **`sqlite_database_path`**, **`HECKLER_DATABASE_PATH`** strip / falsy fallback — matches §2.
+6. **Integration note:** Correlation set after successful completion persists on the reaction thread until **`log_event`**’s **`finally`**; pipeline should call **`log_event`** on all paths that need persistence — covered by existing tests and worker structure.
 
 ---
 
@@ -76,24 +79,17 @@ Pinned from **task statement + §2 contracts + working-tree code/tests** (minima
 
 | ID | Severity | Type | Phase | Subtask | Description |
 |----|----------|------|-------|---------|-------------|
-| F1 | **critical** | `process-violation` / narrative–git mismatch | 0.5 / 1 | T1–T5 | Plan §8 and CHANGELOG describe SQLite + tracing as **landed** at **`b9b24afb09280787e41d42302d4c613d2f81cbd6`**, but **that commit’s** `heckler/` tree is still **JSONL** `HecklerLogger` (no `event_store` / `tracing_context`). Implementation reviewed here is **uncommitted** (modified + untracked). |
-| F2 | minor | `decision-log-stale` | 3 | T13 | T13 “Chosen approach” still says **`HecklerLogger`** keeps **interim JSONL** under the DB parent through T2/T3 boundary language; **final** state is SQLite-only per T14/T3 — log not amended for “after T3” truth. |
-| P1 | minor | `scout-incomplete` | 0.5 | — | Map grep list missing explicit §5.4 **`callback`** / global-hook disproof patterns. |
-| O1 | observation | — | 4 | — | `grep` for `langfuse` / `callback` in `heckler/*.py`: only **`reactor.py`** mentions Langfuse env + LiteLLM metadata; `audio_capture` / `models` use “callback” unrelated to LiteLLM — **§5.4 suspected duplicate-root coupling** not evidenced in package code. |
+| ~~F1~~ | — | — | — | — | **Resolved (v2.0):** SQLite + tracing are **committed** at **`HEAD`**; v1.0 concern was uncommitted / wrong-tree review. |
+| F2 | minor | `decision-log-stale` | 3 | T13 | **T13** “Chosen approach” / deferred items still describe **interim JSONL** under the DB parent and “logger still writes JSONL until T3”; final shipped state is **SQLite-only** — log should be amended for post-T3 truth. |
+| P1 | minor | `scout-incomplete` | 0.5 | — | Map grep list missing explicit §5.4 **`callback`** / global-hook disproof patterns (v1.0 **P1**, unchanged). |
+| D1 | minor | `process-violation` | 0.5 | — | Plan §8 **`b9b24af`** does **not** contain **`heckler/event_store.py`**; narrated “landed” SQLite tree aligns with **`0ea0f4e`**, not §8 as written (orchestrator / auditor handoff). |
+| O1 | observation | — | 4 | — | **`langfuse` / LiteLLM callback** wiring: package code uses env-gated **`metadata`** at **`litellm.completion`** only; no competing global callback registration found in **`heckler/*.py`**. |
 
 ---
 
-## 6. Detailed findings (> minor)
+## 6. Detailed findings (> minor severity)
 
-### F1 — Closure SHA vs git tree (critical)
-
-**Expected:** Repository at plan §8 **post-execution tree SHA** contains the SQLite-only logger, new store module, tracing module, and reactor instrumentation described in §2 *Landed* and `CHANGELOG.MD` **sqlite-local-db-obs-langfuse**.
-
-**Found:** `git ls-tree --name-only HEAD heckler/` has no `event_store.py` / `tracing_context.py`. `git show HEAD:heckler/logger.py` begins with JSONL + `_coerce_json` / `_path_for_date` pattern. Working tree replaces this with SQLite.
-
-**Evidence:** local commands: `git ls-tree HEAD heckler/`, `git show HEAD:heckler/logger.py` (first lines JSONL-era), `git status -sb` (modified + untracked implementation files).
-
-**Action:** Commit (or amend) so **`HEAD`** matches the narrated **landed** state; then re-tag §8 SHA or amend plan §8 to the commit that actually contains the migration.
+**None.** Remaining actionable items are **minor** (**D1**, **F2**, **P1**) and are summarized in §5 and §13.
 
 ---
 
@@ -101,15 +97,15 @@ Pinned from **task statement + §2 contracts + working-tree code/tests** (minima
 
 | # | Focus | Scenario | Expected | Actual | Result |
 |---|--------|-----------|----------|--------|--------|
-| A1 | Integration seam | Successful `litellm.completion` → correlation set → `log_event` on same reaction thread | Row carries `correlation_json` when metadata present; cleared after insert | `logger.log_event` `finally: clear_correlation()`; tests `test_logger_writes_correlation_json_when_set`, `test_correlation_set_from_completion_response_ids` | **passes** |
-| A2 | Integration seam | `litellm.completion` raises | No correlation leak; `LLM_ERROR` tuple | `clear_correlation()` in `except`; `test_llm_exception_resets_correlation_thread_local` | **passes** |
+| A1 | Integration seam | Successful `litellm.completion` → correlation → `log_event` same thread | Row carries `correlation_json` when set; cleared after insert | `finally: clear_correlation()`; tests `test_logger_writes_correlation_json_when_set`, `test_correlation_set_from_completion_response_ids` | **passes** |
+| A2 | Integration seam | `litellm.completion` raises | No correlation leak; `LLM_ERROR` | `clear_correlation()` in `except`; `test_llm_exception_resets_correlation_thread_local` | **passes** |
 | A3 | Integration seam | Hosted observability env off | No `metadata` kwarg to LiteLLM | `test_litellm_completion_has_no_metadata_without_observability_env` | **passes** |
 | A4 | Integration seam | Env on | `metadata.generation_name == heckler.react` | `test_litellm_completion_gets_metadata_when_hosted_observability_env` | **passes** |
 | A5 | Failure path | SQLite insert raises | ERROR log + re-raise + correlation cleared | `test_logger_insert_failure_logs_error_and_raises`, `test_logger_clears_correlation_after_failed_insert` | **passes** |
-| A6 | §5.4 coupling | Duplicate LiteLLM roots / global `langfuse` callback registration outside reactor | None outside reactor for Langfuse integration | Grep: no `litellm.success_callback` / `langfuse` package imports outside `reactor.py` | **passes** (observation O1) |
-| A7 | Regression | `serialize_heckle_event` is sole payload authority | DB payload matches model projection | `test_logger_row_payload_equals_models_projection`, `test_logger_payload_matches_serialize_heckle_event` | **passes** |
+| A6 | §5.4 coupling | Duplicate LiteLLM roots / global Langfuse callback outside reactor | None for hosted tracing | No `litellm.success_callback` / Langfuse SDK registration in **`heckler/*.py`**; **`reactor`** only sets env-gated **`metadata`** | **passes** (O1) |
+| A7 | Regression | `serialize_heckle_event` sole payload authority | DB payload matches model projection | `test_logger_row_payload_equals_models_projection`, `test_logger_payload_matches_serialize_heckle_event` | **passes** |
 
-**Integration seams waiver:** Not applicable — multiple subsystems meet.
+**Integration seams waiver:** Not applicable.
 
 ---
 
@@ -117,47 +113,43 @@ Pinned from **task statement + §2 contracts + working-tree code/tests** (minima
 
 | Item | Severity | Note |
 |------|----------|------|
-| **`scripts/import_legacy_jsonl.py`** | minor / accepted deferral | Plan T6 / CHANGELOG: **no dedicated pytest**; script docstring checklist + JSON1 doc — **matches declared deferral**. |
-| **`Connection.close()` on shutdown** | observation | T14 deferred; no new leak proof in audit — **documented deferral**. |
-| **Kill criteria → tests** | — | T1 concurrent inserts + schema mismatch covered in `tests/test_event_store.py`; T3 insert failure covered; T4 metadata/correlation covered in `tests/test_reactor.py`. |
-
-No **major** `coverage-gap` identified beyond the **F1** git-boundary issue (tests green on WD, not on documented closure commit).
+| **`scripts/import_legacy_jsonl.py`** | minor / accepted deferral | Plan T6 / CHANGELOG: **no dedicated pytest** — matches declared deferral. |
+| **`Connection.close()` on shutdown** | observation | T14 deferred; unchanged. |
+| **Kill criteria → tests** | — | Concurrent inserts / schema mismatch (`test_event_store.py`), insert failure, metadata/correlation (`test_reactor.py`, logger tests) — covered. |
 
 ---
 
 ## 9. Phase 1 — Intent traceability (summary)
 
-- **Task statement ↔ code (WD):** Replace JSONL with SQLite-only store, unify serialization, reactor-local LiteLLM metadata + correlation, optional legacy import — **met** in working tree.
-- **Non-goals:** No dual-write steady state; no audio in DB; no SQLAlchemy; CLI remains `--list-devices` only (verified `pipeline.py`); T6 script is standalone — **respected** in working tree.
-- **Map → plan §4:** New files (`event_store`, `tracing_context`, `test_event_store`, `scripts/import_legacy_jsonl.py`) align with plan packets; scout file map did not pre-list new modules — **acceptable** with plan §0 intake.
-- **§Interface inventory `suspect_modified`:** `HecklerConfig`, `HecklerLogger`, `Reactor` — addressed in §2 and code.
-
-**Narrative-concealment:** None beyond **F1** (changelog/plan closure vs git).
+- **Task ↔ code (`HEAD`):** SQLite-only store, unified serialization, reactor-local LiteLLM **`metadata`** + **`tracing_context`** correlation, optional legacy import script — **met**.
+- **Non-goals:** No steady-state dual-write JSONL; no audio in DB; no SQLAlchemy; **`--list-devices`** only (`pipeline.py`); T6 script standalone — **respected**.
+- **Map → plan §4:** New modules and script align with plan; scout file map did not pre-list them — **acceptable** with plan §0 intake.
+- **§Interface inventory `suspect_modified`:** **`HecklerConfig`**, **`HecklerLogger`**, **`Reactor`** — reflected in §2 and implementation.
 
 ---
 
 ## 10. Phase 2 — Contract compliance (summary)
 
-| Contract topic | Verdict (working tree) |
-|----------------|-------------------------|
-| Types / `HecklerConfig.sqlite_database_path`, env strip | **pass** (`load_config`, tests) |
+| Contract topic | Verdict (`HEAD`) |
+|----------------|------------------|
+| Types / `sqlite_database_path`, **`HECKLER_DATABASE_PATH`** | **pass** |
 | Logger signatures | **pass** |
 | Single JSON projection | **pass** |
 | SQLite error envelope | **pass** |
 | `Reactor.react` / `LLM_ERROR` | **pass** |
-| No global LiteLLM callback mutation | **pass** |
-| CLI | **pass** |
+| No global LiteLLM callback mutation for observability | **pass** |
+| CLI | **pass** (`--list-devices` only) |
 
 ---
 
 ## 11. Phase 3 — Decision logs (summary)
 
-| Log | vs code |
-|-----|---------|
+| Log | vs code (`HEAD`) |
+|-----|------------------|
 | **T12** | Matches `event_store` + `tracing_context` + WAL/thread model. |
-| **T13** | Matches config/env; **F2** wording drift on interim JSONL. |
-| **T14** | Matches logger + `finally` clear + insert failure behavior; `close()` deferred as stated. |
-| **T15** | Matches metadata gating + primitive correlation + rejection of global Langfuse callback registration. |
+| **T13** | Config/env matches; **F2** prose drift on JSONL. |
+| **T14** | Matches logger + `finally` clear + insert failure; `close()` deferred as stated. |
+| **T15** | Matches metadata gating + primitive correlation + no global Langfuse callback registration. |
 
 ---
 
@@ -165,28 +157,32 @@ No **major** `coverage-gap` identified beyond the **F1** git-boundary issue (tes
 
 | Scout prediction | Type | Outcome | Finding |
 |------------------|------|---------|---------|
-| Surface 1 — `log_dir` ↔ logger/config | suspected_coupling (confirmed in map) | **verified** addressed: `log_dir` removed; `sqlite_database_path` + env — | — |
-| Surface 2 — `HeckleEvent` ↔ pipeline ↔ logger schema | confirmed | **verified** — single `serialize_heckle_event` path to DB | — |
-| Surface 3 — duplicate JSON coercion logger vs models | confirmed | **verified** — logger duplicate path removed (tests enforce) | — |
-| Surface 4 — LiteLLM duplicate trace roots | confirmed (resolved by owner) | **verified** — instrumentation only at `litellm.completion` + metadata; grep shows no competing registration | O1 |
-| Surface 5 — daily JSONL pattern / operators | confirmed | **verified** — steady state SQLite; T6 optional import script | — |
-| §5.4 — `litellm` tracing + SQLite correlation orphan/duplicate spans | suspected | **not-tested** against live Langfuse; **code + tests** support single-surface design | — |
-| §5.4 — T3 parallel T4 import/API drift | suspected | **ruled-out** in current tree (imports resolve; pytest green) | — |
-| Ambiguity — optional JSONL import | residual | **verified** — `scripts/import_legacy_jsonl.py` present with documented flags | — |
-| `completion_assistant_text` thin tests | missing_test_coverage note | **partially improved** by reactor test suite (not exhaustively branch-tested) | observation |
+| Surface 1 — `log_dir` ↔ logger/config | confirmed | **verified** — `log_dir` removed; `sqlite_database_path` + env | — |
+| Surface 2 — `HeckleEvent` ↔ pipeline ↔ logger | confirmed | **verified** — `serialize_heckle_event` → DB | — |
+| Surface 3 — duplicate JSON coercion | confirmed | **verified** — logger uses models projection only (tests enforce) | — |
+| Surface 4 — LiteLLM duplicate trace roots | confirmed (owner resolved) | **verified** — single `litellm.completion` surface + `metadata` | O1 |
+| Surface 5 — daily JSONL / operators | confirmed | **verified** — SQLite steady state; T6 import script | — |
+| §5.4 — tracing + SQLite correlation | suspected | **not-tested** live against Langfuse; code + tests favor single-surface design | — |
+| §5.4 — T3 ∥ T4 import drift | suspected | **ruled-out** — imports resolve; pytest green | — |
+| Ambiguity — optional JSONL import | residual | **verified** — `scripts/import_legacy_jsonl.py` with documented flags | — |
+| `completion_assistant_text` thin coverage | `missing_test_coverage` note | **partially improved** by reactor tests | observation |
 
 ---
 
 ## 13. Verdict
 
-**`fail`**
+**`pass-with-conditions`**
 
-**Blocking:** **F1** — The documented post-execution SHA **`b9b24afb09280787e41d42302d4c613d2f81cbd6`** does **not** contain the SQLite migration; the reviewed implementation and **113** passing tests apply to the **dirty working tree**, not that commit. Until the migration is **committed** (and §8 / changelog anchors updated to match), the repository is **not** merge- or release-audited as stated.
+**Resolved blocking (vs v1.0):** Implementation matches §2 *Landed* at **`HEAD`**; **113** tests green on the **committed** tree.
 
-**Non-blocking:** amend **T13** prose (**F2**); pre-plan-exploration grep vocabulary (**P1**).
+**Conditions (non-blocking but should be cleaned up):**
+
+1. **D1** — Amend plan §8 provenance SHA (or prose) so it points at a commit that actually contains **`heckler/event_store.py`** (**`0ea0f4e`** or later).
+2. **F2** — Amend **`.dev/decision-logs/T13.md`** to remove interim-JSONL narrative inconsistent with shipped T3.
+3. **P1** — Pre-plan-exploration: extend §Coupling surfaces grep inventory for §5.4-style **`callback`** / LiteLLM global-hook patterns on future maps.
 
 ---
 
 ## 14. Scout feedback (P1)
 
-Add to future context maps’ §Coupling surfaces grep inventory, when plans cite §5.4-style disproofs: e.g. **`litellm.success_callback`**, **`success_callback`**, or **`callback`** scoped to LiteLLM imports — distinct from `sounddevice` / `CommentType.CALLBACK` noise — so scout completeness aligns with orchestrator coupling vocabulary.
+Add to future context maps’ §Coupling surfaces grep inventory when plans cite §5.4-style disproofs: e.g. **`litellm.success_callback`**, **`success_callback`**, or **`callback`** scoped to LiteLLM usage — distinct from **`CommentType.CALLBACK`** / **`sounddevice`** noise — so scout completeness aligns with orchestrator coupling vocabulary.
