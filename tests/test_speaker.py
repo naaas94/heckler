@@ -1,9 +1,11 @@
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import kokoro
 import numpy as np
 import pytest
+import torch
 
 import heckler.speaker as speaker_mod
 from heckler.config import HecklerConfig
@@ -147,6 +149,21 @@ def test_non_ndarray_audio_chunk_raises_speaker_error(monkeypatch, config):
         speaker.speak("x")
 
     assert not speaker.is_playing.is_set()
+
+
+def test_speak_accepts_kokoro_result_like_with_torch_audio(monkeypatch, config):
+    """Kokoro >=0.9 yields Result objects with torch.FloatTensor audio, not 3-tuples."""
+    speaker, pipeline_inst, _ = _speaker_with_mock_pipeline(monkeypatch, config)
+    mock_play = MagicMock()
+    monkeypatch.setattr(speaker_mod.sd, "play", mock_play)
+    fake = SimpleNamespace(audio=torch.tensor([0.5, -0.5], dtype=torch.float32))
+    pipeline_inst.side_effect = lambda *a, **k: iter([fake])
+
+    speaker.speak("line")
+
+    played = mock_play.call_args.args[0]
+    assert played.dtype == np.float32
+    np.testing.assert_array_equal(played, np.array([0.5, -0.5], dtype=np.float32))
 
 
 def test_empty_kokoro_stream_raises_speaker_error(monkeypatch, config):

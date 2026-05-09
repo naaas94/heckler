@@ -8,10 +8,10 @@ Target profile for v1: **Windows**, **NVIDIA RTX 3060 or better** (CUDA for Whis
 
 ## Setup
 
-1. **CUDA-enabled PyTorch** (CUDA 12.1 wheels):
+1. **CUDA-enabled PyTorch** (CUDA 12.1 wheels). Use the PyTorch index **only** for this step so pip does not substitute an older CPU build from PyPI:
 
    ```bash
-   pip install torch==2.2.0+cu121 --index-url https://download.pytorch.org/whl/cu121
+   pip install torch==2.5.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
    ```
 
 2. **Install the project** (includes runtime deps such as faster-whisper, LiteLLM, Kokoro, sounddevice):
@@ -19,6 +19,8 @@ Target profile for v1: **Windows**, **NVIDIA RTX 3060 or better** (CUDA for Whis
    ```bash
    pip install -e ".[dev]"
    ```
+
+   `pyproject.toml` pins **NumPy below 2.x** and **torch 2.5+** so Kokoro’s Transformers stack stays compatible with PyTorch’s attention helpers. If you mix indexes, install PyTorch first as in step 1, then this step from PyPI.
 
 3. **Environment file**
 

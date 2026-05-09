@@ -9,6 +9,7 @@ from typing import Any, Iterator
 
 import numpy as np
 import sounddevice as sd
+import torch
 
 from heckler.config import HecklerConfig
 
@@ -72,20 +73,33 @@ class Speaker:
 
     def _collect_audio(self, generator: Iterator[Any]) -> np.ndarray:
         """
-        Kokoro yields (graphemes, phonemes, audio_chunk) tuples.
-        We only care about audio_chunk (float32 numpy array, 24kHz mono).
-        Concatenate all chunks into one array for gapless playback.
+        Kokoro yields ``KPipeline.Result`` objects (``.audio``) or, for older
+        versions, ``(graphemes, phonemes, audio_chunk)`` tuples. Audio may be
+        ``numpy.ndarray`` or ``torch.FloatTensor`` (24 kHz mono). Concatenate
+        all chunks into one array for gapless playback.
         """
         chunks: list[np.ndarray] = []
         for item in generator:
-            if not isinstance(item, tuple) or len(item) != 3:
+            if hasattr(item, "audio") and not isinstance(item, tuple):
+                raw = item.audio
+            elif isinstance(item, tuple) and len(item) == 3:
+                raw = item[2]
+            else:
                 raise ValueError(
-                    "expected (graphemes, phonemes, audio_chunk) tuple from Kokoro"
+                    "expected Kokoro KPipeline.Result or (graphemes, phonemes, audio) tuple"
                 )
-            _, _, audio_chunk = item
-            if not isinstance(audio_chunk, np.ndarray):
-                raise ValueError("Kokoro audio_chunk must be a numpy.ndarray")
-            chunks.append(np.asarray(audio_chunk, dtype=np.float32))
+            if raw is None:
+                raise ValueError("Kokoro chunk has no audio (None)")
+            if isinstance(raw, torch.Tensor):
+                chunks.append(
+                    np.asarray(raw.detach().cpu().numpy(), dtype=np.float32)
+                )
+            elif isinstance(raw, np.ndarray):
+                chunks.append(np.asarray(raw, dtype=np.float32))
+            else:
+                raise ValueError(
+                    "Kokoro audio must be a numpy.ndarray or torch.Tensor"
+                )
         if not chunks:
             raise ValueError("no audio chunks produced by Kokoro pipeline")
         return np.asarray(np.concatenate(chunks), dtype=np.float32)

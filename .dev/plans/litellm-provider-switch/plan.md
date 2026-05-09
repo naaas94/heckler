@@ -1,8 +1,8 @@
 # Plan: litellm-provider-switch
 
-**Plan document version:** 1.2  
+**Plan document version:** 1.2.1  
 **Orchestrator skill:** orchestrator-planning v0.5  
-**Plan status:** Amendment **T5** executed in-repo (audit `2026-05-09-litellm-provider-switch.md`); re-run [auditor-review](file:///C:/Users/Ale/.cursor/skills/auditor-review/SKILL.md) for a fresh verdict.
+**Plan status:** Amendment **T5** executed in-repo. Auditor gate: `.dev/audits/2026-05-09-litellm-provider-switch.md` **v1.2** verdict **`pass`** (2026-05-09).
 
 ---
 
@@ -16,7 +16,7 @@
 | **Map generator** | pre-plan-exploration v0.2 |
 | **Commit SHA (map vs repo)** | Map records **unavailable (no `.git` at repository root)** at exploration time. Current workspace: `git rev-parse HEAD` fails (`HEAD` ambiguous / no revision); treat SHA as **unavailable until git history exists** — executors must re-run pre-plan or `git log -1` on touched paths before execution if a SHA becomes available. |
 | **Post-execution tree SHA (plan v1.1)** | `1788bf89fe81e97999ec4fb5ff87ac1f6c14a556` — record for auditor staleness checks against map §0; diverge → treat map intake as historical and re-verify coupling grep. |
-| **Amendment (plan v1.2)** | Audit **fail** (`2026-05-09-litellm-provider-switch.md`): **F1** blocking on T7/T9 narrative; **F2**–**F3** non-blocking; remediation = **T5** (packet + §7). |
+| **Amendment (plan v1.2)** | Audit **v1.1** **fail** remediated by **T5**; **v1.2** **`pass`** (`2026-05-09-litellm-provider-switch.md`). |
 
 **CONDITIONAL handling:** §5.2 and §5.4 reference ambiguity flags 1–3. Subtasks whose scope matches a flagged ambiguity include the kill criterion: *halt if context-map flag \<N\> is unresolved at execution start* (Flags 1–3 only; Flag 4–5 are none_found / non-blocking per map).
 
@@ -281,3 +281,11 @@ Use as a quick **pass/fail / needs-evidence** grid during Phases 1–4:
 ### 8.5 Out of scope for this handoff
 
 Auditor does **not** re-execute T1–T4. **T5** narrative fixes are in-scope for audit re-run. Outcomes: findings severities only; any new architectural forks trigger a new plan version (not silent §2 drift).
+
+---
+
+## 9. Process log
+
+**2026-05-09 — Amendment packet vs same-session execution:** `packets/T5.md` was emitted in the **same** session as the remediation edits to `T7.md`, `T9.md`, `T11.md`, `README.md`, `CHANGELOG.MD`, and `plan.md` §2. A downstream executor receiving **only** the packet afterward would find **no remaining diffs** against the kill criteria (packet looked like open work but work was already landed).
+
+**Convention for future amendments:** (a) emit the packet **then** hand off to an executor before applying edits, **or** (b) if the orchestrator applies edits immediately, append a **`## Status: completed`** block at the top of the packet with commit SHA / date so the file is clearly a **record** in the audit chain, not a pending queue item.
