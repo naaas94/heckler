@@ -195,3 +195,84 @@ def test_react_none_completion_response_returns_llm_error(monkeypatch, reactor_c
     result, _, discard = r.react(_audio_utt("x"), "")
     assert result is None
     assert discard == DiscardReason.LLM_ERROR
+
+
+def test_correlation_set_from_completion_response_ids(monkeypatch, reactor_cfg: HecklerConfig):
+    """After success, thread-local correlation carries stable primitive completion fields."""
+    from heckler.tracing_context import get_correlation
+
+    payload = '{"comment": "Neat.", "score": 0.9, "type": "observation"}'
+    resp = _litellm_completion_response(payload)
+    resp.id = "chatcmpl-testid"
+    resp.model = "openai/gpt-4o-mini"
+    mock_completion = MagicMock(return_value=resp)
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    r = Reactor(reactor_cfg)
+    r.react(_audio_utt("hello"), "")
+    assert get_correlation() == {
+        "completion_id": "chatcmpl-testid",
+        "model": "openai/gpt-4o-mini",
+    }
+
+
+def test_litellm_completion_gets_metadata_when_hosted_observability_env(
+    monkeypatch, reactor_cfg: HecklerConfig
+):
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    payload = '{"comment": "Neat.", "score": 0.9, "type": "observation"}'
+    mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    r = Reactor(reactor_cfg)
+    r.react(_audio_utt("x"), "")
+    kwargs = mock_completion.call_args.kwargs
+    assert kwargs["metadata"]["generation_name"] == "heckler.react"
+    assert "heckler-reactor" in kwargs["metadata"]["tags"]
+
+
+def test_litellm_completion_has_no_metadata_without_observability_env(
+    monkeypatch, reactor_cfg: HecklerConfig
+):
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+
+    payload = '{"comment": "Neat.", "score": 0.9, "type": "observation"}'
+    mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    r = Reactor(reactor_cfg)
+    r.react(_audio_utt("x"), "")
+    kwargs = mock_completion.call_args.kwargs
+    assert "metadata" not in kwargs
+
+
+def test_magicmock_response_attrs_do_not_populate_correlation(monkeypatch, reactor_cfg: HecklerConfig):
+    """Falsifier: default MagicMock placeholder attributes must not stringify into correlation rows."""
+    from heckler.tracing_context import get_correlation
+
+    payload = '{"comment": "Neat.", "score": 0.9, "type": "observation"}'
+    resp = _litellm_completion_response(payload)
+    mock_completion = MagicMock(return_value=resp)
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    r = Reactor(reactor_cfg)
+    r.react(_audio_utt("x"), "")
+    assert get_correlation() is None
+
+
+def test_llm_exception_resets_correlation_thread_local(monkeypatch, reactor_cfg: HecklerConfig):
+    from heckler.tracing_context import get_correlation, set_correlation
+
+    set_correlation({"stale": "keep"})
+    mock_completion = MagicMock(side_effect=ConnectionError("upstream"))
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    r = Reactor(reactor_cfg)
+    r.react(_audio_utt("x"), "")
+    assert get_correlation() is None

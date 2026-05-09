@@ -1,6 +1,6 @@
 # HECKLER
 
-HECKLER is a local, console-only reactive audio loop for English speech: it listens on the microphone, segments utterances with Silero VAD, transcribes with faster-whisper on CUDA, scores lexical density, asks an LLM (via [LiteLLM](https://github.com/BerriAI/litellm)) for short commentary, applies pacing and quality gates, synthesizes speech with Kokoro, and plays through the default output device. The default chat model is **OpenAI GPT-4o mini** (`openai/gpt-4o-mini`). Every handled utterance ends up as one JSON line (a `HeckleEvent`) under `logs/` regardless of whether anything was spoken.
+HECKLER is a local, console-only reactive audio loop for English speech: it listens on the microphone, segments utterances with Silero VAD, transcribes with faster-whisper on CUDA, scores lexical density, asks an LLM (via [LiteLLM](https://github.com/BerriAI/litellm)) for short commentary, applies pacing and quality gates, synthesizes speech with Kokoro, and plays through the default output device. The default chat model is **OpenAI GPT-4o mini** (`openai/gpt-4o-mini`). Structured utterance records (`HeckleEvent`) are persisted to a **SQLite** database (default file `logs/heckler.db`) rather than append-only JSON lines; see **`HECKLER_DATABASE_PATH`** below.
 
 ## Hardware
 
@@ -32,6 +32,7 @@ Defined in `.env` / `.env.example` and read in `heckler/config.py` → `load_con
 
 | Variable | Purpose |
 |----------|---------|
+| `HECKLER_DATABASE_PATH` | SQLite database file path for persisted `HeckleEvent` rows (non-empty overrides default `logs/heckler.db`). Replaces the retired config field **`log_dir`** / daily JSONL files as the steady-state sink. |
 | `HECKLER_LLM_MODEL` | LiteLLM model id (non-empty overrides default `openai/gpt-4o-mini`). |
 | `OPENAI_API_KEY` | API key for OpenAI- and Azure-routed LiteLLM models (`openai/...`, `azure/...`); optional if the provider picks up credentials elsewhere. |
 | `ANTHROPIC_API_KEY` | API key for `anthropic/...` models; optional if unused or supplied via other means. |
@@ -40,9 +41,17 @@ Defined in `.env` / `.env.example` and read in `heckler/config.py` → `load_con
 | `SCORE_THRESHOLD` | Minimum LLM self-score to accept commentary (default `0.65`). |
 | `PACING_INTERVAL` | Minimum seconds between spoken outputs / cooldown baseline (default `12.0`). |
 | `KOKORO_VOICE` | Kokoro voice id (default `af_sarah`). |
-| `LOG_DENSITY_FAILURES` | If `true`, log density-gate rejects as JSONL events; default `false` drops them silently. |
+| `LOG_DENSITY_FAILURES` | If `true`, persist density-gate rejects via the same SQLite event path as other events; default `false` drops them silently. |
 
-Additional tuning lives on `HecklerConfig` defaults in `heckler/config.py` (sample rate, VAD thresholds, queue size, log directory, etc.) but is not overridden via `.env.example` in v1.
+**Optional observability (hosted traces)** — LiteLLM and provider SDKs read these from the process environment when present; heckler does not require them for normal runs.
+
+| Variable | Purpose |
+|----------|---------|
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | When both are set, LiteLLM-oriented integrations (e.g. Langfuse) can attach traces to completions. |
+| `LANGCHAIN_TRACING_V2` or `LANGSMITH_TRACING` | Truthy values enable LangSmith-style tracing together with an API key below. |
+| `LANGCHAIN_API_KEY` / `LANGSMITH_API_KEY` | API key for LangSmith / LangChain tracing when tracing flags are on. |
+
+Additional tuning lives on `HecklerConfig` defaults in `heckler/config.py` (sample rate, VAD thresholds, queue size, default SQLite path, etc.) but is not all exposed in `.env.example` in v1.
 
 ## Usage
 
@@ -60,7 +69,7 @@ python -m heckler --list-devices
 
 The `pyproject.toml` console script entry point `heckler` also resolves to `heckler.pipeline:main`.
 
-Logs append to `logs/heckler_YYYY-MM-DD.jsonl`. Startup progress lines prefixed with `[HECKLER]` go to stdout and are not written as JSONL events.
+Structured events are written to the SQLite file configured by `HECKLER_DATABASE_PATH` (default `logs/heckler.db`). Startup progress lines prefixed with `[HECKLER]` go to stdout and are not stored as event rows.
 
 ## First run
 

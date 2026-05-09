@@ -31,7 +31,7 @@ class HecklerConfig:
     min_output_interval_s: float = 12.0
     kokoro_voice: str = "af_sarah"
     kokoro_speed: float = 1.05
-    log_dir: str = "logs"
+    sqlite_database_path: str = "logs/heckler.db"
     log_density_failures: bool = False
     queue_maxsize: int = 10
 
@@ -40,8 +40,11 @@ def load_config() -> HecklerConfig:
     load_dotenv()
     llm_env = (os.getenv("HECKLER_LLM_MODEL") or "").strip()
     llm_model = llm_env if llm_env else "openai/gpt-4o-mini"
+    db_env = (os.getenv("HECKLER_DATABASE_PATH") or "").strip()
+    sqlite_database_path = db_env if db_env else "logs/heckler.db"
     return HecklerConfig(
         llm_model=llm_model,
+        sqlite_database_path=sqlite_database_path,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         ollama_api_base=os.getenv("OLLAMA_API_BASE", ""),

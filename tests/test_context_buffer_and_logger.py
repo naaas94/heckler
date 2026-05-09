@@ -1,7 +1,9 @@
 import json
+import logging
+import sqlite3
 import threading
-from dataclasses import asdict
-from datetime import date
+
+import pytest
 
 import heckler.logger as logger_module
 
@@ -13,7 +15,9 @@ from heckler.models import (
     DiscardReason,
     HeckleEvent,
     ReactorResult,
+    serialize_heckle_event,
 )
+from heckler.tracing_context import get_correlation, set_correlation
 
 
 def _minimal_event(**kwargs) -> HeckleEvent:
@@ -56,21 +60,14 @@ def test_context_buffer_respects_maxlen():
     assert buf.get_context_block() == "[1] b\n[2] c"
 
 
-def test_logger_log_dir_created(tmp_path):
-    cfg = HecklerConfig(log_dir=str(tmp_path / "logs"))
+def test_logger_creates_parent_directory_for_sqlite_path(tmp_path):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "logs" / "heckler.db"))
     HecklerLogger(cfg)
     assert (tmp_path / "logs").is_dir()
 
 
-def test_logger_appends_jsonl_with_expected_path(tmp_path, monkeypatch):
-    class FakeDate:
-        @staticmethod
-        def today():
-            return date(2026, 3, 15)
-
-    monkeypatch.setattr(logger_module, "date", FakeDate)
-
-    cfg = HecklerConfig(log_dir=str(tmp_path / "logs"))
+def test_logger_persists_event_row(tmp_path):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "logs" / "heckler.db"))
     logger = HecklerLogger(cfg)
     event = _minimal_event(
         reactor_result=ReactorResult(
@@ -85,50 +82,54 @@ def test_logger_appends_jsonl_with_expected_path(tmp_path, monkeypatch):
     )
     logger.log_event(event)
 
-    log_file = tmp_path / "logs" / "heckler_2026-03-15.jsonl"
-    assert log_file.is_file()
-    line = log_file.read_text(encoding="utf-8").strip()
-    row = json.loads(line)
-    assert row["reactor_result"]["comment_type"] == "observation"
-    assert row["discard_reason"] == "score_gate"
-    assert "audio_chunk" not in line
+    db_file = tmp_path / "logs" / "heckler.db"
+    conn = sqlite3.connect(str(db_file))
+    try:
+        row = conn.execute(
+            "SELECT payload_json, correlation_json FROM events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    payload = json.loads(row[0])
+    assert payload["reactor_result"]["comment_type"] == "observation"
+    assert payload["discard_reason"] == "score_gate"
+    assert "audio_chunk" not in json.dumps(payload)
+    assert row[1] is None
 
 
-def test_serialize_strips_top_level_audio_chunk(tmp_path, monkeypatch):
-    cfg = HecklerConfig(log_dir=str(tmp_path / "logs"))
+def test_logger_payload_matches_serialize_heckle_event(tmp_path):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "db.sqlite"))
     logger = HecklerLogger(cfg)
-    event = _minimal_event()
-    fake = dict(asdict(event))
-    fake["audio_chunk"] = {"x": 1}
-    monkeypatch.setattr(logger_module.dataclasses, "asdict", lambda e: fake)
-    text = logger._serialize(event)
-    assert "audio_chunk" not in text
+    event = _minimal_event(transcript="probe")
+    logger.log_event(event)
+    conn = sqlite3.connect(str(tmp_path / "db.sqlite"))
+    try:
+        (payload_raw,) = conn.execute(
+            "SELECT payload_json FROM events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert json.loads(payload_raw) == serialize_heckle_event(event)
 
 
-def test_logger_unicode_transcript_preserved(tmp_path, monkeypatch):
-    class FakeDate:
-        @staticmethod
-        def today():
-            return date(2026, 1, 1)
-
-    monkeypatch.setattr(logger_module, "date", FakeDate)
-    cfg = HecklerConfig(log_dir=str(tmp_path / "logs"))
+def test_logger_unicode_transcript_preserved(tmp_path):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "logs" / "heckler.db"))
     logger = HecklerLogger(cfg)
     event = _minimal_event(transcript="café 日本語")
     logger.log_event(event)
-    line = (tmp_path / "logs" / "heckler_2026-01-01.jsonl").read_text(encoding="utf-8")
-    row = json.loads(line)
-    assert row["transcript"] == "café 日本語"
+    conn = sqlite3.connect(str(tmp_path / "logs" / "heckler.db"))
+    try:
+        (payload_raw,) = conn.execute(
+            "SELECT payload_json FROM events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert json.loads(payload_raw)["transcript"] == "café 日本語"
 
 
-def test_concurrent_log_events_yield_one_json_object_per_line(tmp_path, monkeypatch):
-    class FakeDate:
-        @staticmethod
-        def today():
-            return date(2026, 6, 1)
-
-    monkeypatch.setattr(logger_module, "date", FakeDate)
-    cfg = HecklerConfig(log_dir=str(tmp_path / "logs"))
+def test_concurrent_log_events_insert_distinct_rows(tmp_path):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "logs" / "heckler.db"))
     logger = HecklerLogger(cfg)
 
     def worker(idx: int) -> None:
@@ -140,28 +141,72 @@ def test_concurrent_log_events_yield_one_json_object_per_line(tmp_path, monkeypa
     for t in threads:
         t.join()
 
-    raw = (tmp_path / "logs" / "heckler_2026-06-01.jsonl").read_text(encoding="utf-8")
-    lines = [ln for ln in raw.splitlines() if ln.strip()]
-    assert len(lines) == 20
-    for ln in lines:
-        json.loads(ln)
+    conn = sqlite3.connect(str(tmp_path / "logs" / "heckler.db"))
+    try:
+        (count,) = conn.execute("SELECT COUNT(*) FROM events").fetchone()
+    finally:
+        conn.close()
+    assert count == 20
 
 
-def test_log_path_changes_when_calendar_day_changes(tmp_path, monkeypatch):
-    cfg = HecklerConfig(log_dir=str(tmp_path / "logs"))
+def test_logger_writes_correlation_json_when_set(tmp_path):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "db.sqlite"))
+    logger = HecklerLogger(cfg)
+    set_correlation({"response_id": "rid-1", "provider": "mock"})
+    event = _minimal_event()
+    logger.log_event(event)
+    assert get_correlation() is None
+
+    conn = sqlite3.connect(str(tmp_path / "db.sqlite"))
+    try:
+        (corr_raw,) = conn.execute(
+            "SELECT correlation_json FROM events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert json.loads(corr_raw)["response_id"] == "rid-1"
+
+
+def test_logger_insert_failure_logs_error_and_raises(tmp_path, monkeypatch, caplog):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "db.sqlite"))
+    logger = HecklerLogger(cfg)
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(logger_module, "insert_event_row", boom)
+    caplog.set_level(logging.ERROR)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        logger.log_event(_minimal_event())
+    assert "SQLite event insert failed" in caplog.text
+
+
+def test_logger_clears_correlation_after_failed_insert(tmp_path, monkeypatch):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "db.sqlite"))
+    logger = HecklerLogger(cfg)
+    set_correlation({"keep": "clean"})
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("fail")
+
+    monkeypatch.setattr(logger_module, "insert_event_row", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        logger.log_event(_minimal_event())
+    assert get_correlation() is None
+
+
+# Adversarial gap addressed: ``log_event`` uses ``serialize_heckle_event`` only — if a
+# duplicate coercion path were reintroduced on the logger, this equality check would drift.
+def test_logger_row_payload_equals_models_projection(tmp_path, monkeypatch):
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "db.sqlite"))
     logger = HecklerLogger(cfg)
     event = _minimal_event()
+    calls: list[HeckleEvent] = []
 
-    seq = iter([date(2026, 1, 1), date(2026, 1, 2)])
+    def capture_serialize(e: HeckleEvent):
+        calls.append(e)
+        return serialize_heckle_event(e)
 
-    class FakeDate:
-        @staticmethod
-        def today():
-            return next(seq)
-
-    monkeypatch.setattr(logger_module, "date", FakeDate)
+    monkeypatch.setattr(logger_module, "serialize_heckle_event", capture_serialize)
     logger.log_event(event)
-    logger.log_event(event)
-
-    assert (tmp_path / "logs" / "heckler_2026-01-01.jsonl").is_file()
-    assert (tmp_path / "logs" / "heckler_2026-01-02.jsonl").is_file()
+    assert len(calls) == 1 and calls[0] is event

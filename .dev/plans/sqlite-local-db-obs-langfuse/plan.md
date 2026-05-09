@@ -1,8 +1,8 @@
 # Plan: sqlite-local-db-obs-langfuse
 
-**Plan document version:** 1.0  
+**Plan document version:** 1.1.0  
 **Orchestrator skill:** orchestrator-planning v0.5  
-**Plan status:** Draft — ready for executor packets.
+**Plan status:** **Complete** — subtasks **T1–T6** landed per **`CHANGELOG.MD`** (sqlite-local-db-obs-langfuse section) and repository tree at **`b9b24afb09280787e41d42302d4c613d2f81cbd6`** (see §8 auditor handoff).
 
 ---
 
@@ -15,6 +15,7 @@
 | **Scope-area labels (§Ambiguity flags)** | None blocking; residual **optional legacy JSONL import** is scoped to **T6** (kill criterion if treated as required without a packet). |
 | **Skill version + commit SHA (map)** | pre-plan-exploration **v0.2** · map records **`0afd022fc5c9b83872a3bc6b015aa6627eed6ee5`** |
 | **Current `git rev-parse HEAD` at planning time** | **`0afd022fc5c9b83872a3bc6b015aa6627eed6ee5`** — matches map SHA on plan creation (staleness: re-verify after further commits on touched paths). |
+| **Post-execution tree SHA (plan v1.1)** | **`b9b24afb09280787e41d42302d4c613d2f81cbd6`** — record for auditor staleness checks against §0 / §8; diverge on touched paths → re-verify grep surfaces and §2 *Landed* narrative if code drifted. |
 
 **READY handling:** No CONDITIONAL ambiguity kill criteria in §4 beyond T6’s optional scope.
 
@@ -68,6 +69,14 @@ Replace heckler’s append-only **JSONL** logging under `log_dir` with **SQLite*
 | **T2** | `.dev/decision-logs/T13.md` — `log_dir` retirement, default DB path rationale, env naming |
 | **T3** | `.dev/decision-logs/T14.md` — serialization unification, failure modes, transaction boundaries |
 | **T4** | `.dev/decision-logs/T15.md` — LiteLLM observability integration approach (callbacks vs env-only), what metadata is captured for SQLite correlation |
+
+**Landed (plan v1.1.0)** — narrative alignment for auditors; binding detail remains in code + decision logs.
+
+- **`HecklerConfig`:** **`sqlite_database_path`** (default **`logs/heckler.db`**); **`log_dir`** removed. **`HECKLER_DATABASE_PATH`:** non-empty after strip overrides default; whitespace-only falls back to default (**T13**, **`tests/test_models.py`**).
+- **Store API:** **`heckler/event_store.py`** — **`open_store`**, **`init_schema`**, **`insert_event_row`**; **`events`** + **`heckler_schema_version`** DDL per **T12**.
+- **Logger:** **`HecklerLogger`** persists SQLite rows only; payload via **`serialize_heckle_event`** + **`json.dumps`**; optional **`correlation_json`** from **`tracing_context`** (**T14**).
+- **Reactor:** **`litellm.completion`** receives optional **`metadata`** when Langfuse / LangSmith-style env indicates hosted tracing; correlation primitives from response captured into **`tracing_context`** (**T15**).
+- **T6:** **`scripts/import_legacy_jsonl.py`** — CLI via **`python scripts/import_legacy_jsonl.py`** only; **`--dry-run`**, **`--skip-existing`** per CHANGELOG.
 
 ---
 
@@ -237,6 +246,53 @@ The plan does not duplicate full packet bodies beyond §6 references above.
 ## 7. Amendment subtasks
 
 None. Future audits should use **§7** if blocking issues arise post-*Complete*.
+
+---
+
+## 8. Auditor handoff
+
+**Intent.** Gate merge or release on adversarial review (**auditor-review** skill): validate landed behavior against this plan’s §1–§2 contracts, executor CHANGELOG narrative, and decision logs—not merely green tests.
+
+**Suggested audit artifact**
+
+| Field | Value |
+|-------|--------|
+| **Target path** | `.dev/audits/2026-05-09-sqlite-local-db-obs-langfuse.md` (create if absent; version header inside file per audit conventions) |
+| **Plan + changelog anchors** | `.dev/plans/sqlite-local-db-obs-langfuse/plan.md` **v1.1.0** · `CHANGELOG.MD` · **sqlite-local-db-obs-langfuse** tier-one section |
+| **Tree SHA at plan closure** | **`b9b24afb09280787e41d42302d4c613d2f81cbd6`** — diverge → treat §2 prose and §5 couplings as potentially stale; re-run coupling grep. |
+
+**Decision logs (architectural)**
+
+| Subtask | Path |
+|---------|------|
+| T1 | `.dev/decision-logs/T12.md` |
+| T2 | `.dev/decision-logs/T13.md` |
+| T3 | `.dev/decision-logs/T14.md` |
+| T4 | `.dev/decision-logs/T15.md` |
+
+**Primary code / docs surfaces**
+
+- **`heckler/event_store.py`**, **`heckler/tracing_context.py`**, **`heckler/logger.py`**, **`heckler/config.py`**, **`heckler/reactor.py`**, **`heckler/models.py`** (`serialize_heckle_event` as single JSON projection).
+- **`tests/test_event_store.py`**, **`tests/test_context_buffer_and_logger.py`**, **`tests/test_reactor.py`**, **`tests/test_models.py`** (`HECKLER_DATABASE_PATH`, regression **`test_config_has_sqlite_path_not_log_dir`**).
+- **`README.md`**, **`.env.example`**, optional **`scripts/import_legacy_jsonl.py`** (no **`project.scripts`** entry per §2).
+
+**Contract checks (non-exhaustive)**
+
+- Steady-state persistence is **SQLite only**; no daily **`heckler_*.jsonl`** write path in **`HecklerLogger`**.
+- **`HECKLER_DATABASE_PATH`** → **`HecklerConfig.sqlite_database_path`** with documented strip / falsy fallback (**T2** / **`tests/test_models.py`**).
+- **`Reactor.react`** return tuple and **`DiscardReason.LLM_ERROR`** path unchanged; **`litellm.completion`** remains the sole reactor instrumentation surface for hosted traces (**§5.4** suspected duplicate-root spans—grep **`langfuse`**, **`callback`** outside **`reactor.py`** if validating).
+- CLI unchanged: **`heckler.pipeline:main`** exposes only **`--list-devices`**.
+- **`T6`** script invocation documented as **`python scripts/import_legacy_jsonl.py`** only.
+
+**Known deferrals (verify narrative alignment)**
+
+- **`T14`**: explicit **`Connection.close()`** on pipeline shutdown deferred (see **`.dev/decision-logs/T14.md`**).
+- **`T6`**: dedicated pytest for legacy import script deferred; **`--skip-existing`** documents JSON1 requirement.
+
+**Retired-string sweep (auditor grep)**
+
+- **`log_dir`** as **`HecklerConfig`** field (should be absent).
+- Steady-state prose implying JSONL as primary sink (**`README`**, **`CHANGELOG`** heckler-v1 historical sections may still mention JSONL for older tasks—distinction is **current** vs **historical** behavior).
 
 ---
 

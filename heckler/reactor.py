@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, Optional
 
 from heckler.config import HecklerConfig
 from heckler.models import CommentType, DiscardReason, ReactorResult, Utterance
+from heckler.tracing_context import clear_correlation, set_correlation
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,82 @@ def completion_assistant_text(response: Any) -> str:
                     chunks.append(str(text_attr))
         return "".join(chunks)
     return str(content)
+
+
+def _scalar_string_for_correlation(val: Any) -> Optional[str]:
+    """Accept only JSON-safe primitives for correlation; skip MagicMock / nested objects."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return str(val).lower()
+    if isinstance(val, (str, int, float)):
+        return str(val)
+    return None
+
+
+def _correlation_from_completion_response(response: Any) -> Optional[dict[str, str]]:
+    """Map LiteLLM/OpenAI-shaped completion objects to flat string metadata for SQLite."""
+    if response is None:
+        return None
+    out: dict[str, str] = {}
+    ident = _scalar_string_for_correlation(getattr(response, "id", None))
+    if ident:
+        out["completion_id"] = ident
+    model = _scalar_string_for_correlation(getattr(response, "model", None))
+    if model:
+        out["model"] = model
+    fp = _scalar_string_for_correlation(getattr(response, "system_fingerprint", None))
+    if fp:
+        out["system_fingerprint"] = fp
+    hidden = getattr(response, "_hidden_params", None)
+    if isinstance(hidden, dict):
+        for src_key, dest_key in (
+            ("litellm_call_id", "litellm_call_id"),
+            ("model_id", "litellm_model_id"),
+        ):
+            s = _scalar_string_for_correlation(hidden.get(src_key))
+            if s:
+                out[dest_key] = s
+    return out or None
+
+
+def _hosted_observability_env_active() -> bool:
+    """
+    True when common Langfuse / LangSmith env wiring is present so LiteLLM can tag generations.
+
+    Does not import optional SDKs or mutate global LiteLLM callback lists (no duplicate roots).
+    """
+    if os.getenv("LANGFUSE_PUBLIC_KEY", "").strip() and os.getenv(
+        "LANGFUSE_SECRET_KEY", ""
+    ).strip():
+        return True
+    tracing_on = os.getenv("LANGCHAIN_TRACING_V2", "").strip().lower() in (
+        "true",
+        "1",
+    ) or os.getenv("LANGSMITH_TRACING", "").strip().lower() in ("true", "1")
+    if tracing_on and (
+        os.getenv("LANGCHAIN_API_KEY", "").strip()
+        or os.getenv("LANGSMITH_API_KEY", "").strip()
+    ):
+        return True
+    return False
+
+
+def _litellm_observability_completion_kwargs() -> dict[str, Any]:
+    """
+    Extra kwargs for ``litellm.completion`` when hosted tracing env is enabled.
+
+    LiteLLM forwards ``metadata`` to its logging/callback pipeline (Langfuse/Langsmith-style
+    tooling reads keys like ``generation_name`` when callbacks are configured via env/package).
+    """
+    if not _hosted_observability_env_active():
+        return {}
+    return {
+        "metadata": {
+            "tags": ["heckler", "heckler-reactor"],
+            "generation_name": "heckler.react",
+        }
+    }
 
 
 def _litellm_auth_params(config: HecklerConfig) -> dict[str, Any]:
@@ -126,6 +204,8 @@ class Reactor:
         )
         t0 = time.perf_counter()
         extra = _litellm_auth_params(self._config)
+        observe_kw = _litellm_observability_completion_kwargs()
+        clear_correlation()
         try:
             response = litellm.completion(
                 model=self._config.llm_model,
@@ -136,13 +216,20 @@ class Reactor:
                 max_tokens=self._config.llm_max_tokens,
                 temperature=self._config.llm_temperature,
                 **extra,
+                **observe_kw,
             )
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             logger.error("LLM API call failed: %s", exc)
+            clear_correlation()
             return None, elapsed_ms, DiscardReason.LLM_ERROR
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        corr = _correlation_from_completion_response(response)
+        if corr:
+            set_correlation(corr)
+        else:
+            clear_correlation()
         raw_text = completion_assistant_text(response)
         parsed = self._parse_response(raw_text)
         if parsed is None:
