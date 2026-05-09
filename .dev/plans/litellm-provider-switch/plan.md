@@ -1,7 +1,8 @@
 # Plan: litellm-provider-switch
 
+**Plan document version:** 1.2  
 **Orchestrator skill:** orchestrator-planning v0.5  
-**Plan status:** Complete (pending execution)
+**Plan status:** Amendment **T5** executed in-repo (audit `2026-05-09-litellm-provider-switch.md`); re-run [auditor-review](file:///C:/Users/Ale/.cursor/skills/auditor-review/SKILL.md) for a fresh verdict.
 
 ---
 
@@ -14,6 +15,8 @@
 | **Scope-area labels (§Ambiguity flags)** | `config`, `reactor`, `docs`, `tests`, `README`, `.env.example` |
 | **Map generator** | pre-plan-exploration v0.2 |
 | **Commit SHA (map vs repo)** | Map records **unavailable (no `.git` at repository root)** at exploration time. Current workspace: `git rev-parse HEAD` fails (`HEAD` ambiguous / no revision); treat SHA as **unavailable until git history exists** — executors must re-run pre-plan or `git log -1` on touched paths before execution if a SHA becomes available. |
+| **Post-execution tree SHA (plan v1.1)** | `1788bf89fe81e97999ec4fb5ff87ac1f6c14a556` — record for auditor staleness checks against map §0; diverge → treat map intake as historical and re-verify coupling grep. |
+| **Amendment (plan v1.2)** | Audit **fail** (`2026-05-09-litellm-provider-switch.md`): **F1** blocking on T7/T9 narrative; **F2**–**F3** non-blocking; remediation = **T5** (packet + §7). |
 
 **CONDITIONAL handling:** §5.2 and §5.4 reference ambiguity flags 1–3. Subtasks whose scope matches a flagged ambiguity include the kill criterion: *halt if context-map flag \<N\> is unresolved at execution start* (Flags 1–3 only; Flag 4–5 are none_found / non-blocking per map).
 
@@ -39,7 +42,7 @@ Migrate the heckler LLM integration from the Anthropic Python SDK (`Anthropic.me
 |--------|---------|
 | **Types / interfaces** | **`HecklerConfig`** (dataclass in `heckler/config.py`): `llm_model: str` default **`openai/gpt-4o-mini`** (LiteLLM model string; resolves context-map Flag 2 as *binding*: colloquial “4o mini” = this id). Retain **`anthropic_api_key: str`** (default `""`) populated from **`ANTHROPIC_API_KEY`** via `load_config`. Add **`openai_api_key: str`** (default `""`) populated from **`OPENAI_API_KEY`**. Optional **`ollama_api_base: str`** (default `""`) populated from **`OLLAMA_API_BASE`** only (v1 frozen name). `load_config() -> HecklerConfig` **must not** use `os.environ["ANTHROPIC_API_KEY"]` KeyError as today; it uses `os.getenv` for keys with empty-string default for missing vars. **`HECKLER_LLM_MODEL`** env overrides `llm_model` when set (non-empty). Owning subtask **T1**; typed parse path: `load_config` + dataclass fields; round-trip / construction tests in **`tests/test_models.py`**. |
 | **Reactor** | **`Reactor.__init__(config: HecklerConfig) -> None`** and **`react(...) -> tuple[Optional[ReactorResult], float, Optional[DiscardReason]]`** unchanged at the type level. Owning subtask **T2**; construction unchanged for call sites. |
-| **LiteLLM call** | Use **`litellm.completion`** (or **`litellm.acompletion`** is out of scope) with **`messages`** shaped as OpenAI-style chat messages carrying the existing user payload (system + user split as today: system prompt from `prompts/system.md`, user string includes examples + context + utterance). **`model=`** must be `config.llm_model`. Pass **`api_key`** only when the selected provider’s key on `HecklerConfig` is non-empty; otherwise omit so LiteLLM/env defaults apply. Owning subtask **T2**; no new user-facing Python API beyond config fields above. |
+| **LiteLLM call** | Use **`litellm.completion`** (or **`litellm.acompletion`** is out of scope) with **`messages`** shaped as OpenAI-style chat messages carrying the existing user payload (system + user split as today: system prompt from `prompts/system.md`, user string includes examples + context + utterance). **`model=`** must be `config.llm_model`. Pass **`api_key`** only when the selected provider’s key on `HecklerConfig` is non-empty; otherwise omit so LiteLLM/env defaults apply. Owning subtask **T2**; no new user-facing Python API beyond config fields above. *Landed (plan v1.2 / amendment T5):* for `model` id prefixes **`openai/`** and **`azure/`**, non-empty **`HecklerConfig.openai_api_key`** supplies the **`api_key`** kwarg to **`litellm.completion`** (same branch as **`heckler/reactor.py:_litellm_auth_params`**); **`ollama/`** uses non-empty **`ollama_api_base`** as **`api_base`**; bare model ids use **`openai_api_key`** when set per T11. |
 | **Error envelope** | On transport/SDK failure inside `react`, catch **`Exception`**, log at **ERROR**, return **`(None, latency_ms, DiscardReason.LLM_ERROR)`** — same as today. Log message text must be **provider-agnostic** (e.g. **`LLM API call failed: %s`**); do not hard-code “Anthropic” in new log lines. Owning subtask **T2**. |
 | **Naming** | New symbols: env **`HECKLER_LLM_MODEL`**, config fields **`openai_api_key`**, **`ollama_api_base`**. New dependency: **`litellm`** in `pyproject.toml`. Remove direct runtime dependency on **`anthropic`** unless T1 decision log documents a concrete reason to keep it (default: **remove**). |
 | **Logging** | Levels unchanged (`error` on API failure, `warning` on parse issues). Structured fields: none required beyond existing `%s` interpolation. |
@@ -189,9 +192,92 @@ Self-contained packets (§1 + §2 + §4 block for `Tn` + filtered §5.2/§5.4 + 
 - `.dev/plans/litellm-provider-switch/packets/T2.md`
 - `.dev/plans/litellm-provider-switch/packets/T3.md`
 - `.dev/plans/litellm-provider-switch/packets/T4.md`
+- `.dev/plans/litellm-provider-switch/packets/T5.md` (amendment — audit remediation)
 
 ---
 
 ## 7. Amendment subtasks
 
-None. Open amendments if audit finds §2 / README / T7-T9 narrative drift after execution.
+Issued after audit **`.dev/audits/2026-05-09-litellm-provider-switch.md`** (`fail`, **F1** blocking).
+
+### Amendment DAG
+
+```mermaid
+graph TD
+  Audit[".dev/audits/2026-05-09-litellm-provider-switch.md F1-F3"]
+  PlanSurf["Plan §4 T4 kill + §5.4 Surface 7 narrative requirements"]
+  T5["T5: audit narrative + contract alignment"]
+  Audit --> T5
+  PlanSurf --> T5
+```
+
+### T5 — Audit remediation (decision logs + T11 + §2 + README)
+
+| Field | Content |
+|--------|---------|
+| **ID** | T5 |
+| **Scope** | Close **F1**: `.dev/decision-logs/T7.md` and `T9.md` must not present Anthropic-only, 2-tuple score-gate, `_react_with_discard`, or `messages.create` pipeline wrapping as **current** behavior anywhere a reader scans top-to-bottom without hitting an explicit **Historical / not current** fence. Close **F2** in the same edit pass (score gate ↔ 3-tuple + `DiscardReason.SCORE_GATE` in any retained archival text). Close **F3**: `.dev/decision-logs/T11.md` documents **`azure/`** sharing the OpenAI **`api_key`** path with **`openai/`**; optional README env table note for **`azure/...`** if operator guidance is still ambiguous. |
+| **Files to touch** | `.dev/decision-logs/T7.md`, `.dev/decision-logs/T9.md`, `.dev/decision-logs/T11.md`, `.dev/plans/litellm-provider-switch/plan.md` (§2 *Landed* line already in table — verify it matches shipped `_litellm_auth_params` after edits), `README.md` (optional row or footnote for Azure), optionally `CHANGELOG.MD` one line under **litellm-provider-switch** referencing T5 audit fix |
+| **Contract bindings** | Plan §2 (LiteLLM row + *Landed*), §4 T4 kill criterion (decision-log truth), audit F1–F3 |
+| **Inputs** | Audit file; current `heckler/reactor.py` (`_litellm_auth_params`, `react`) |
+| **Outputs** | Compliant decision logs; aligned T11; §2 verified; README if needed; executor changelog/decision stub per tier (**standard** — brief what/why) |
+| **Kill criteria** | Halt if any unfenced body section (before **Historical**) still states Anthropic `messages.create`, pipeline `messages.create` wrapper, or score gate as `(None, latency)` only. Halt if T11 omits **`azure/`** parity with **`openai/`** for **`api_key`**. Halt if §2 *Landed* text disagrees with `heckler/reactor.py`. |
+| **Log tier** | standard |
+| **Risks & mitigations** | Over-deleting history → retain **Historical** sections with banners instead of silent deletion so archaeology remains traceable. |
+
+**Packet:** `.dev/plans/litellm-provider-switch/packets/T5.md`
+
+---
+
+## 8. Auditor handoff
+
+This section orients the **auditor-review** skill (Phase 0 → cold read first, then narrative chain). It does not replace the audit; it shortens discovery.
+
+### 8.1 Artifact chain (read in auditor order after Phase 0)
+
+| Phase hint | Artifact | Path |
+|-------------|-----------|------|
+| Scout baseline | Context map | `.dev/plans/litellm-provider-switch/context-map.md` |
+| Intent + decomposition | This plan | `.dev/plans/litellm-provider-switch/plan.md` |
+| Subtask packets (executor contract snapshots) | T1–T4 | `.dev/plans/litellm-provider-switch/packets/T1.md` … `T4.md` |
+| Architectural reasoning | Decision logs | `.dev/decision-logs/T10.md`, `.dev/decision-logs/T11.md` |
+| Historical reactor / pipeline (errata applied) | Decision logs | `.dev/decision-logs/T7.md`, `.dev/decision-logs/T9.md` |
+| Shipped narrative of changes | Changelog | `CHANGELOG.MD` — section **litellm-provider-switch** (older **`heckler-v1`** bullets may describe superseded symbols; treat as historical unless cross-checked to current code). |
+
+### 8.2 Phase 0 — suggested cold-read scope
+
+Diff or read these implementation files **before** `CHANGELOG.MD` and decision-log prose to limit confirmation bias:
+
+- `heckler/config.py` — `HecklerConfig` defaults, `load_config()` getenv semantics, `HECKLER_LLM_MODEL` strip / fallback.
+- `heckler/reactor.py` — lazy `import litellm` inside `react`, `litellm.completion` call shape, `completion_assistant_text`, `_litellm_auth_params`.
+- `pyproject.toml` — `litellm` dependency; absence of `anthropic` (per T11).
+- `tests/test_models.py` — config defaults, env overrides, whitespace `HECKLER_LLM_MODEL`, no `KeyError` on missing LLM keys.
+- `tests/test_reactor.py` — patch target `litellm.completion`, `completion_assistant_text` unit tests, `None` / empty `choices` → `LLM_ERROR` paths.
+- `.env.example`, `README.md` — env names align with §2 and `load_config()`.
+
+### 8.3 Map-to-plan and contract hotspots
+
+- **§0 SHA drift:** Context map claimed git unavailable; **§0 Post-execution tree SHA** records current `HEAD`. Auditor: if touched files differ from map file list, file **scout-incomplete** or **prediction-divergence** per auditor skill.
+- **§2 vs shipped behavior:** Plan §2 **LiteLLM call** row includes *Landed (plan v1.2 / amendment T5)* for **`openai/`** + **`azure/`** **`api_key`** routing, matching **`heckler/reactor.py:_litellm_auth_params`**. Amendment **T5** rewrote **T7**/**T9** decision logs (see §7). Re-audit should confirm **F1**–**F3** cleared.
+- **Context map Surface 6 (suspected):** Anthropic `content` blocks vs OpenAI `choices` — addressed by **`completion_assistant_text`**; tests cover string and list parts plus reactor integration mocks.
+- **Lazy `litellm` import:** Mitigates suspected import side effects (§5.4); auditor still checks first-call behavior and any other `import litellm` sites.
+- **CLI:** `heckler.pipeline:main` still exposes only **`--list-devices`** — grep for new LLM flags should be empty.
+
+### 8.4 Prediction checklist (from plan §5.2 / §5.4)
+
+Use as a quick **pass/fail / needs-evidence** grid during Phases 1–4:
+
+| ID | Assumption / coupling | Auditor focus |
+|----|------------------------|---------------|
+| 5.2-1 | OpenAI-style `messages` for scoped providers | Non-OpenAI models with same message shape; Ollama `api_base` only when `ollama_api_base` set |
+| 5.2-2 | No `KeyError` at `load_config` | Deploy/CI scripts that assumed hard failure on missing `ANTHROPIC_API_KEY` |
+| 5.2-3 | Mock stability on `litellm` bumps | Pin policy or CI tolerance |
+| 5.2-4 | `openai/gpt-4o-mini` validity | Runtime 400s, docs vs default |
+| 5.2-5 / Flag 1 | `OLLAMA_API_BASE` only | Docs, `.env.example`, T10, and `_litellm_auth_params` agree |
+| 5.4 | `tests/test_pipeline.py` + `HecklerConfig(anthropic_api_key=...)` | Still valid if field retained |
+| 5.4 | README / `.env.example` / §2 | No undocumented env keys; **`azure/`** documented in README + §2 *Landed* (**F3**) |
+| 5.4 | T7/T9 decision logs | **T5** added **Current behavior** / **Historical** fencing — confirm **F1** / **F2** cleared (no unfenced Anthropic-as-current prose) |
+
+### 8.5 Out of scope for this handoff
+
+Auditor does **not** re-execute T1–T4. **T5** narrative fixes are in-scope for audit re-run. Outcomes: findings severities only; any new architectural forks trigger a new plan version (not silent §2 drift).

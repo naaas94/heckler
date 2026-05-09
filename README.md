@@ -31,7 +31,7 @@ Defined in `.env` / `.env.example` and read in `heckler/config.py` → `load_con
 | Variable | Purpose |
 |----------|---------|
 | `HECKLER_LLM_MODEL` | LiteLLM model id (non-empty overrides default `openai/gpt-4o-mini`). |
-| `OPENAI_API_KEY` | API key for OpenAI-routed models (e.g. `openai/...`); optional if the provider picks up credentials elsewhere. |
+| `OPENAI_API_KEY` | API key for OpenAI- and Azure-routed LiteLLM models (`openai/...`, `azure/...`); optional if the provider picks up credentials elsewhere. |
 | `ANTHROPIC_API_KEY` | API key for `anthropic/...` models; optional if unused or supplied via other means. |
 | `OLLAMA_API_BASE` | Base URL for `ollama/...` models when set (e.g. `http://127.0.0.1:11434`). |
 | `WHISPER_MODEL` | Whisper model id (default `large-v3`). |
