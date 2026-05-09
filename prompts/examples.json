@@ -1,0 +1,32 @@
+[
+  {
+    "transcript": "I've been debugging this for three hours and I still don't know what's wrong",
+    "comment": "Bold of you to assume it's the code.",
+    "score": 0.81,
+    "type": "sarcasm"
+  },
+  {
+    "transcript": "we should probably document this at some point",
+    "comment": "Probably.",
+    "score": 0.77,
+    "type": "passive_aggressive"
+  },
+  {
+    "transcript": "the architecture is basically just a big caching problem in disguise",
+    "comment": "A caching problem with feelings. Progress.",
+    "score": 0.79,
+    "type": "observation"
+  },
+  {
+    "transcript": "I think we need to have a meeting about the meeting cadence",
+    "comment": "The ouroboros of productivity.",
+    "score": 0.88,
+    "type": "absurdist"
+  },
+  {
+    "transcript": "I mean it works on my machine",
+    "comment": "Ship the machine.",
+    "score": 0.91,
+    "type": "sarcasm"
+  }
+]
