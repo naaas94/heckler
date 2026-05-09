@@ -1,6 +1,6 @@
 # HECKLER
 
-HECKLER is a local, console-only reactive audio loop for English speech: it listens on the microphone, segments utterances with Silero VAD, transcribes with faster-whisper on CUDA, scores lexical density, asks Claude Haiku for short commentary, applies pacing and quality gates, synthesizes speech with Kokoro, and plays through the default output device. Every handled utterance ends up as one JSON line (a `HeckleEvent`) under `logs/` regardless of whether anything was spoken.
+HECKLER is a local, console-only reactive audio loop for English speech: it listens on the microphone, segments utterances with Silero VAD, transcribes with faster-whisper on CUDA, scores lexical density, asks an LLM (via [LiteLLM](https://github.com/BerriAI/litellm)) for short commentary, applies pacing and quality gates, synthesizes speech with Kokoro, and plays through the default output device. The default chat model is **OpenAI GPT-4o mini** (`openai/gpt-4o-mini`). Every handled utterance ends up as one JSON line (a `HeckleEvent`) under `logs/` regardless of whether anything was spoken.
 
 ## Hardware
 
@@ -14,7 +14,7 @@ Target profile for v1: **Windows**, **NVIDIA RTX 3060 or better** (CUDA for Whis
    pip install torch==2.2.0+cu121 --index-url https://download.pytorch.org/whl/cu121
    ```
 
-2. **Install the project** (includes runtime deps such as faster-whisper, Anthropic SDK, Kokoro, sounddevice):
+2. **Install the project** (includes runtime deps such as faster-whisper, LiteLLM, Kokoro, sounddevice):
 
    ```bash
    pip install -e ".[dev]"
@@ -22,15 +22,18 @@ Target profile for v1: **Windows**, **NVIDIA RTX 3060 or better** (CUDA for Whis
 
 3. **Environment file**
 
-   Copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Uncomment optional overrides as needed.
+   Copy `.env.example` to `.env`. For the default `openai/gpt-4o-mini` model, set **`OPENAI_API_KEY`** (or configure credentials the way your OpenAI tooling expects). To use Anthropic, Ollama, or another LiteLLM backend, set **`HECKLER_LLM_MODEL`** to the appropriate LiteLLM model id and provide the matching key or base URL (see the table below). Uncomment optional overrides as needed.
 
 ## Configuration (environment variables)
 
-Defined in `.env` / `.env.example`:
+Defined in `.env` / `.env.example` and read in `heckler/config.py` → `load_config()`:
 
 | Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | Required. API key for Claude Haiku commentary. |
+| `HECKLER_LLM_MODEL` | LiteLLM model id (non-empty overrides default `openai/gpt-4o-mini`). |
+| `OPENAI_API_KEY` | API key for OpenAI-routed models (e.g. `openai/...`); optional if the provider picks up credentials elsewhere. |
+| `ANTHROPIC_API_KEY` | API key for `anthropic/...` models; optional if unused or supplied via other means. |
+| `OLLAMA_API_BASE` | Base URL for `ollama/...` models when set (e.g. `http://127.0.0.1:11434`). |
 | `WHISPER_MODEL` | Whisper model id (default `large-v3`). |
 | `SCORE_THRESHOLD` | Minimum LLM self-score to accept commentary (default `0.65`). |
 | `PACING_INTERVAL` | Minimum seconds between spoken outputs / cooldown baseline (default `12.0`). |

@@ -7,8 +7,6 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from anthropic import Anthropic
-
 from heckler.config import HecklerConfig
 from heckler.models import CommentType, DiscardReason, ReactorResult, Utterance
 
@@ -17,14 +15,73 @@ logger = logging.getLogger(__name__)
 _JSON_OBJECT_RE = re.compile(r"\{[^}]+\}")
 
 
+def completion_assistant_text(response: Any) -> str:
+    """
+    Extract assistant message text from a ``litellm.completion`` (OpenAI-compatible) response.
+
+    Expected shape: ``choices[0].message.content`` as ``str`` or a list of content parts.
+    Documented for downstream regression tests (LiteLLM / provider response drift).
+    """
+    if response is None:
+        return ""
+    choices = getattr(response, "choices", None)
+    if not choices:
+        return ""
+    choice0 = choices[0]
+    msg = getattr(choice0, "message", None)
+    if msg is None:
+        return ""
+    content = getattr(msg, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    chunks.append(str(block.get("text", "")))
+            else:
+                text_attr = getattr(block, "text", None)
+                if text_attr is not None:
+                    chunks.append(str(text_attr))
+        return "".join(chunks)
+    return str(content)
+
+
+def _litellm_auth_params(config: HecklerConfig) -> dict[str, Any]:
+    """Map ``HecklerConfig`` keys to LiteLLM kwargs; omit keys when empty (env defaults)."""
+    model = (config.llm_model or "").strip()
+    if not model:
+        return {}
+    provider, _, _ = model.partition("/")
+    provider = provider.lower()
+    if provider in ("openai", "azure"):
+        if config.openai_api_key:
+            return {"api_key": config.openai_api_key}
+        return {}
+    if provider == "anthropic":
+        if config.anthropic_api_key:
+            return {"api_key": config.anthropic_api_key}
+        return {}
+    if provider == "ollama":
+        if config.ollama_api_base:
+            return {"api_base": config.ollama_api_base}
+        return {}
+    # Bare model id (no ``provider/`` prefix): LiteLLM infers routing; prefer explicit OpenAI key.
+    if "/" not in model and config.openai_api_key:
+        return {"api_key": config.openai_api_key}
+    return {}
+
+
 class Reactor:
-    """Anthropic-backed commentary generation with JSON parsing and score gating."""
+    """LiteLLM-backed commentary generation with JSON parsing and score gating."""
 
     def __init__(self, config: HecklerConfig) -> None:
         """
         Loads system prompt from prompts/system.md.
         Loads examples from prompts/examples.json.
-        Initializes Anthropic client.
         Pre-renders examples_block string (static, no per-call overhead).
         """
         self._config = config
@@ -35,7 +92,6 @@ class Reactor:
             examples_path.read_text(encoding="utf-8")
         )
         self._examples_block = _format_examples_block(raw_examples)
-        self._client = Anthropic(api_key=config.anthropic_api_key)
 
     def react(
         self,
@@ -55,6 +111,8 @@ class Reactor:
         On parse failure: attempt regex fallback to extract JSON object.
         score gate: if result.score < config.score_threshold, return None with SCORE_GATE.
         """
+        import litellm
+
         n_ctx = self._config.context_window_size
         user_content = (
             "Examples of the register and quality bar:\n\n"
@@ -67,22 +125,25 @@ class Reactor:
             "Respond with JSON only."
         )
         t0 = time.perf_counter()
-        raw_text: str
+        extra = _litellm_auth_params(self._config)
         try:
-            message = self._client.messages.create(
+            response = litellm.completion(
                 model=self._config.llm_model,
+                messages=[
+                    {"role": "system", "content": self._system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
                 max_tokens=self._config.llm_max_tokens,
                 temperature=self._config.llm_temperature,
-                system=self._system_prompt,
-                messages=[{"role": "user", "content": user_content}],
+                **extra,
             )
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            logger.error("Anthropic API call failed: %s", exc)
+            logger.error("LLM API call failed: %s", exc)
             return None, elapsed_ms, DiscardReason.LLM_ERROR
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        raw_text = _extract_text_content(message)
+        raw_text = completion_assistant_text(response)
         parsed = self._parse_response(raw_text)
         if parsed is None:
             return None, elapsed_ms, DiscardReason.LLM_ERROR
@@ -168,15 +229,3 @@ def _format_examples_block(examples: list[dict[str, Any]]) -> str:
             f"Response: {json.dumps(resp_obj)}"
         )
     return "\n\n".join(parts)
-
-
-def _extract_text_content(message: Any) -> str:
-    """Concatenate text blocks from an Anthropic message response."""
-    chunks: list[str] = []
-    for block in message.content:
-        btype = getattr(block, "type", None)
-        if btype == "text":
-            chunks.append(getattr(block, "text", ""))
-        elif isinstance(block, dict) and block.get("type") == "text":
-            chunks.append(str(block.get("text", "")))
-    return "".join(chunks)

@@ -130,6 +130,9 @@ All tunables in one place. Loaded once at process start from environment variabl
 ```python
 from dataclasses import dataclass
 import os
+from typing import Optional
+
+from dotenv import load_dotenv
 
 @dataclass(frozen=True)
 class HecklerConfig:
@@ -154,13 +157,15 @@ class HecklerConfig:
     # Context buffer
     context_window_size: int = 5       # last N utterances passed to LLM
 
-    # Reactor (LLM)
-    llm_model: str = "claude-haiku-4-5-20251001"
+    # Reactor (LLM) — LiteLLM model ids, e.g. openai/gpt-4o-mini, anthropic/claude-3-5-haiku-20241022
+    llm_model: str = "openai/gpt-4o-mini"
     llm_max_tokens: int = 150          # comments are short; hard cap
     llm_temperature: float = 0.9       # higher = more creative, needed for humor
     score_threshold: float = 0.65      # minimum score to pass to pacing gate
     score_override_threshold: float = 0.90  # bypasses pacing gate if score >= this
-    anthropic_api_key: str = ""        # loaded from ANTHROPIC_API_KEY env var
+    anthropic_api_key: str = ""        # ANTHROPIC_API_KEY when using anthropic/... models
+    openai_api_key: str = ""           # OPENAI_API_KEY when using openai/... (or env defaults)
+    ollama_api_base: str = ""          # OLLAMA_API_BASE for ollama/... when set
 
     # Pacing gate
     min_output_interval_s: float = 12.0  # cooldown between spoken outputs
@@ -178,8 +183,14 @@ class HecklerConfig:
 
 
 def load_config() -> HecklerConfig:
+    load_dotenv()
+    llm_env = (os.getenv("HECKLER_LLM_MODEL") or "").strip()
+    llm_model = llm_env if llm_env else "openai/gpt-4o-mini"
     return HecklerConfig(
-        anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
+        llm_model=llm_model,
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        ollama_api_base=os.getenv("OLLAMA_API_BASE", ""),
         whisper_model_size=os.getenv("WHISPER_MODEL", "large-v3"),
         score_threshold=float(os.getenv("SCORE_THRESHOLD", "0.65")),
         min_output_interval_s=float(os.getenv("PACING_INTERVAL", "12.0")),
@@ -188,7 +199,7 @@ def load_config() -> HecklerConfig:
     )
 ```
 
-**Note on `llm_model`:** Use `claude-haiku-4-5-20251001` for latency. Do not default to Sonnet — TTFT difference is 600–900ms which breaks the latency budget on a fast conversational turn.
+**Note on `llm_model`:** Default is **`openai/gpt-4o-mini`** (LiteLLM). Override with **`HECKLER_LLM_MODEL`** for other providers; supply the matching API key or base URL env vars (see `README.md` / `.env.example`).
 
 ---
 
@@ -364,9 +375,9 @@ class ContextBuffer:
 
 ### 4.5 `reactor.py`
 
-**Responsibility:** Assembles the LLM prompt, calls Anthropic API, parses structured output, applies score gate. Returns `ReactorResult | None`. This is the highest-latency module — all optimization decisions should prioritize it.
+**Responsibility:** Assembles the LLM prompt, calls **`litellm.completion`** with OpenAI-style chat messages, parses structured output, applies score gate. Returns **`(ReactorResult | None, float, DiscardReason | None)`** per the shipped contract. This is the highest-latency module — all optimization decisions should prioritize it.
 
-**Dependencies:** `anthropic`, `json`, `re` (for fallback parsing)
+**Dependencies:** `litellm`, `json`, `re` (for fallback parsing)
 
 **Prompt architecture:**
 
@@ -466,7 +477,6 @@ class Reactor:
         """
         Loads system prompt from prompts/system.md.
         Loads examples from prompts/examples.json.
-        Initializes Anthropic client.
         Pre-renders examples_block string (static, no per-call overhead).
         """
 
@@ -474,20 +484,19 @@ class Reactor:
         self,
         utterance: Utterance,
         context_block: str
-    ) -> tuple[Optional[ReactorResult], float]:
+    ) -> tuple[Optional[ReactorResult], float, Optional[DiscardReason]]:
         """
-        Returns (result_or_none, llm_latency_ms).
-        result is None if:
-          - API call fails (log error, do not raise)
-          - Response is not parseable JSON (log raw response)
-          - score < config.score_threshold (score gate applied HERE)
+        Returns (result_or_none, llm_latency_ms, discard_reason_or_none).
+        On success: (result, latency_ms, None).
+
+        result is None with a non-None discard_reason if:
+          - API call fails (log error, do not raise) → DiscardReason.LLM_ERROR
+          - Response is not parseable JSON → DiscardReason.LLM_ERROR
+          - score < config.score_threshold (score gate applied HERE) → DiscardReason.SCORE_GATE
 
         On parse failure: attempt regex fallback to extract JSON object
         from response string before giving up. LLMs occasionally prepend
         a word before the JSON despite instructions.
-
-        score gate: if result.score < config.score_threshold, return None
-        with DiscardReason.SCORE_GATE implied (caller handles logging).
         """
 
     def _parse_response(self, raw: str) -> Optional[ReactorResult]:
@@ -501,8 +510,8 @@ class Reactor:
 
 **Latency optimization notes:**
 - Do not use streaming — `max_tokens=150` means the full response arrives in one shot faster than streaming overhead.
-- Do not use async Anthropic client in the reactor thread — the reactor runs in its own dedicated thread; blocking `client.messages.create()` is correct here.
-- If latency regularly exceeds 1500ms, switch to `claude-haiku-4-5-20251001` and lower `max_tokens` to 100.
+- Use synchronous **`litellm.completion`** in the reactor thread; async is out of scope for v1.
+- If latency regularly exceeds 1500ms, try a faster LiteLLM model id (e.g. a smaller OpenAI or Anthropic Haiku routing) and consider lowering `max_tokens` to 100.
 
 ---
 
@@ -675,7 +684,7 @@ def main():
     # Initialize heavy models first — fail fast before any audio starts
     transcriber = Transcriber(config)   # loads Whisper to CUDA
     speaker = Speaker(config)           # loads Kokoro
-    reactor = Reactor(config)           # loads prompts, initializes Anthropic client
+    reactor = Reactor(config)           # loads prompts; LiteLLM at call time
 
     # Lightweight components
     context_buffer = ContextBuffer(config.context_window_size)
@@ -718,16 +727,15 @@ def main():
 [project]
 name = "heckler"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "sounddevice>=0.4.6",
     "numpy>=1.26",
     "faster-whisper>=1.0.3",
-    "anthropic>=0.40.0",
+    "litellm>=1.40.0",
     "kokoro>=0.9.2",
     "torch>=2.2.0",           # silero-vad dependency; CUDA build required
     "python-dotenv>=1.0.0",
-    "uuid",                   # stdlib, but listed for clarity
 ]
 
 [project.optional-dependencies]
@@ -738,6 +746,9 @@ dev = [
 
 [project.scripts]
 heckler = "heckler.pipeline:main"
+
+[tool.setuptools.packages.find]
+include = ["heckler*"]
 ```
 
 **CUDA torch:** The default `pip install torch` installs CPU torch. Executor must install the CUDA 12.1 build explicitly:
@@ -849,6 +860,6 @@ T11: tests/                        ← T2, T7, T8 (mocked) are highest priority
 
 **`test_pacing_gate.py`:** Must cover: first call (no cooldown), call within cooldown, call after cooldown expires, score override within cooldown, score override above threshold, thread-safety (two threads calling `evaluate()` simultaneously). Use `time.sleep()` sparingly — prefer monkeypatching `time.time`.
 
-**`test_reactor.py`:** Must mock `anthropic.Anthropic.messages.create`. Cover: valid JSON response, response with leading text before JSON (fallback regex path), invalid JSON (returns None), score below threshold (returns None), score at exactly threshold (passes — inclusive), API exception (returns None, does not raise).
+**`test_reactor.py`:** Must mock **`litellm.completion`** (or the project’s stable import site used by `Reactor.react`). Cover: valid JSON response, response with leading text before JSON (fallback regex path), invalid JSON (returns None with **`LLM_ERROR`**), score below threshold (returns None with **`SCORE_GATE`**), score at exactly threshold (passes — inclusive), API exception (returns None with **`LLM_ERROR`**, does not raise).
 
 **`test_models.py`:** Serialization round-trip for `HeckleEvent`. Confirm `audio_chunk` is excluded from serialized output. Confirm enum fields serialize to string values.

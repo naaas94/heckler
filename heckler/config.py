@@ -20,12 +20,14 @@ class HecklerConfig:
     density_threshold: float = 0.40
     min_word_count: int = 4
     context_window_size: int = 5
-    llm_model: str = "claude-haiku-4-5-20251001"
+    llm_model: str = "openai/gpt-4o-mini"
     llm_max_tokens: int = 150
     llm_temperature: float = 0.9
     score_threshold: float = 0.65
     score_override_threshold: float = 0.90
     anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    ollama_api_base: str = ""
     min_output_interval_s: float = 12.0
     kokoro_voice: str = "af_sarah"
     kokoro_speed: float = 1.05
@@ -36,8 +38,13 @@ class HecklerConfig:
 
 def load_config() -> HecklerConfig:
     load_dotenv()
+    llm_env = (os.getenv("HECKLER_LLM_MODEL") or "").strip()
+    llm_model = llm_env if llm_env else "openai/gpt-4o-mini"
     return HecklerConfig(
-        anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
+        llm_model=llm_model,
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        ollama_api_base=os.getenv("OLLAMA_API_BASE", ""),
         whisper_model_size=os.getenv("WHISPER_MODEL", "large-v3"),
         score_threshold=float(os.getenv("SCORE_THRESHOLD", "0.65")),
         min_output_interval_s=float(os.getenv("PACING_INTERVAL", "12.0")),

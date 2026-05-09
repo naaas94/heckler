@@ -93,18 +93,31 @@ def test_heckler_config_defaults():
     assert cfg.whisper_model_size == "large-v3"
     assert cfg.score_threshold == 0.65
     assert cfg.log_density_failures is False
+    assert cfg.llm_model == "openai/gpt-4o-mini"
+    assert cfg.anthropic_api_key == ""
+    assert cfg.openai_api_key == ""
+    assert cfg.ollama_api_base == ""
 
 
-def test_load_config_requires_anthropic_key(monkeypatch, tmp_path):
+def test_load_config_without_llm_keys(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(KeyError):
-        load_config()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OLLAMA_API_BASE", raising=False)
+    monkeypatch.delenv("HECKLER_LLM_MODEL", raising=False)
+    cfg = load_config()
+    assert cfg.anthropic_api_key == ""
+    assert cfg.openai_api_key == ""
+    assert cfg.ollama_api_base == ""
+    assert cfg.llm_model == "openai/gpt-4o-mini"
 
 
 def test_load_config_env_overrides(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
+    monkeypatch.setenv("HECKLER_LLM_MODEL", "anthropic/claude-3-5-haiku-latest")
     monkeypatch.setenv("WHISPER_MODEL", "tiny")
     monkeypatch.setenv("SCORE_THRESHOLD", "0.7")
     monkeypatch.setenv("PACING_INTERVAL", "20")
@@ -112,9 +125,20 @@ def test_load_config_env_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("LOG_DENSITY_FAILURES", "true")
     cfg = load_config()
     assert cfg.anthropic_api_key == "sk-test"
+    assert cfg.openai_api_key == "sk-openai"
+    assert cfg.ollama_api_base == "http://127.0.0.1:11434"
+    assert cfg.llm_model == "anthropic/claude-3-5-haiku-latest"
     assert cfg.whisper_model_size == "tiny"
     assert cfg.score_threshold == 0.7
     assert cfg.min_output_interval_s == 20.0
     assert cfg.kokoro_voice == "af_bella"
     assert cfg.log_density_failures is True
     assert cfg.sample_rate == 16_000
+
+
+def test_load_config_heckler_llm_model_whitespace_falls_back_to_default(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECKLER_LLM_MODEL", "   ")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    cfg = load_config()
+    assert cfg.llm_model == "openai/gpt-4o-mini"

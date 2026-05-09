@@ -1,5 +1,17 @@
 # Changelog
 
+## litellm-provider-switch
+
+Plan: migrate the heckler LLM integration from the Anthropic Python SDK to **LiteLLM** so operators can switch providers (OpenAI, Anthropic, Ollama, and other LiteLLM backends) via configuration and environment variables, default chat model **GPT-4o mini** (`openai/gpt-4o-mini`), without changing the rest of the pipeline. Full decomposition and contracts: `.dev/plans/litellm-provider-switch/plan.md`.
+
+**T1:** Introduced LiteLLM-oriented config: default model **`openai/gpt-4o-mini`**, optional multi-provider env keys via **`getenv`** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OLLAMA_API_BASE`), and **`HECKLER_LLM_MODEL`** override for **`llm_model`**—eliminating mandatory **`KeyError`** when **`ANTHROPIC_API_KEY`** is unset at load time. Added runtime dependency **`litellm`**. **Decision log:** `.dev/decision-logs/T10.md`.
+
+**T2:** Replaced Anthropic **`messages.create`** usage with **`litellm.completion`**, OpenAI-style **`messages`** (system + user), provider-aware **`api_key`** / **`api_base`** kwargs from **`HecklerConfig`**, provider-agnostic **`LLM API call failed`** error logging, and **`completion_assistant_text`** for extracting assistant text from LiteLLM/OpenAI-shaped responses. Removed **`anthropic`** from **`pyproject.toml`**; **`tests/test_reactor.py`** mocks **`litellm.completion`**. **Decision log:** `.dev/decision-logs/T11.md`.
+
+**T3:** Extended **`tests/test_reactor.py`** with explicit regression coverage for plain-text extraction from OpenAI-shaped completions (**`choices[0].message.content`** as **`str`**, Flag 3 / T11) and for **`LLM_ERROR`** when the mocked completion returns **`None`** or an empty **`choices`** list. Monkeypatch target remains **`litellm.completion`** per T11.
+
+**T4:** Updated **`.env.example`** and **`README.md`** for LiteLLM multi-provider setup, default **`openai/gpt-4o-mini`**, and env keys aligned with **`load_config()`** (`HECKLER_LLM_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_API_BASE`, plus existing Whisper/Kokoro/pacing vars). Appended **Landed: post-T4 errata** to **`.dev/decision-logs/T7.md`** and **`T9.md`** so Anthropic-only / pipeline-wrapper narrative is not read as current behavior. Synced **`heckler_seed.md`** (§3, §4.5, §5, §9) to match shipped config and reactor contracts.
+
 ## heckler-v1
 
 **T10:** Scoped setuptools package discovery in `pyproject.toml` (`[tool.setuptools.packages.find]` / `include = ["heckler*"]`) so `pip install -e .` does not treat `prompts/`, `tests/`, and other sibling dirs as top-level packages. Widened `Reactor.react()` to `tuple[Optional[ReactorResult], float, Optional[DiscardReason]]` (third element `None` on success, `LLM_ERROR` on API/parse failure, `SCORE_GATE` below threshold); removed `_install_reactor_discard_tracking` / `_react_with_discard` and the pipeline import of `_extract_text_content`, so the reaction worker reads discard semantics from `react()` directly. Updated `tests/test_reactor.py` and `tests/test_pipeline.py` (including `_run_reaction_worker` coverage for direct `reactor.react` calls and pacing rejection after a successful react).
