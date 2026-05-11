@@ -23,7 +23,7 @@ class HecklerConfig:
     llm_model: str = "openai/gpt-4o-mini"
     llm_max_tokens: int = 150
     llm_temperature: float = 0.9
-    score_threshold: float = 0.65
+    score_threshold: float = 0.80
     score_override_threshold: float = 0.90
     anthropic_api_key: str = ""
     openai_api_key: str = ""
@@ -49,7 +49,7 @@ def load_config() -> HecklerConfig:
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         ollama_api_base=os.getenv("OLLAMA_API_BASE", ""),
         whisper_model_size=os.getenv("WHISPER_MODEL", "large-v3"),
-        score_threshold=float(os.getenv("SCORE_THRESHOLD", "0.65")),
+        score_threshold=float(os.getenv("SCORE_THRESHOLD", "0.80")),
         min_output_interval_s=float(os.getenv("PACING_INTERVAL", "12.0")),
         kokoro_voice=os.getenv("KOKORO_VOICE", "af_sarah"),
         log_density_failures=os.getenv("LOG_DENSITY_FAILURES", "false").lower() == "true",
