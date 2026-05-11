@@ -3,13 +3,18 @@
 
 Each non-empty line must be a single JSON object that :func:`heckle_event_from_json_dict`
 accepts (same shape as :func:`serialize_heckle_event` output — no ``audio_chunk`` in the
-persisted event body). Rows are inserted via :func:`heckler.event_store.insert_event_row`
-with ``correlation_json=NULL`` (legacy files had no LiteLLM correlation).
+persisted event body). Each line is written with the same ``payload_json`` contract as live
+logging (:func:`~heckler.models.serialize_heckle_event`), plus v2 normalized ``events``
+columns and ``event_reactor_results`` when present (see implementation); ``correlation_json``
+is always ``NULL`` (legacy files had no LiteLLM correlation).
 
 **Idempotency:** Re-importing the same file inserts duplicate rows by default. Pass
 ``--skip-existing`` to skip lines whose ``(utterance_id, timestamp_iso)`` pair already
-appears in ``events`` (uses SQLite ``json_extract`` on ``payload_json``; requires JSON1,
-which ships with the standard library ``sqlite3`` build on supported platforms).
+appears in ``events``. Detection uses the same ``$.utterance_id`` / ``$.timestamp_iso``
+paths as :func:`~heckler.models.serialize_heckle_event`, preferring v2 normalized
+``events`` columns when present (``COALESCE`` with ``json_extract`` on ``payload_json``)
+so rows match the live logger / migration shape. Requires JSON1 for the extract arm;
+ships with the standard library ``sqlite3`` build on supported platforms.
 
 **Manual verification checklist**
 
@@ -24,9 +29,8 @@ which ships with the standard library ``sqlite3`` build on supported platforms).
 5. Run the same command again; without ``--skip-existing``, count becomes ``2``; with
    ``--skip-existing``, count stays ``1`` and stderr reports one skipped line.
 
-**Deferred automated tests:** This script lives under ``scripts/`` only per T6; failure
-modes such as JSON1 absence under ``--skip-existing`` are exercised manually (see
-``--skip-existing`` error path).
+**Automated tests:** ``tests/test_import_legacy_jsonl.py`` (dedupe paths, normalized insert,
+reactor child row).
 """
 
 from __future__ import annotations
@@ -49,16 +53,61 @@ def _ensure_pkg_path() -> None:
 
 
 def _pair_exists(conn: sqlite3.Connection, utterance_id: str, timestamp_iso: str) -> bool:
+    """True if ``(utterance_id, timestamp_iso)`` is already stored (normalized and/or JSON).
+
+    Matches :func:`~heckler.event_store.insert_heckle_event_row` / migration semantics:
+    v2 columns are authoritative when set; legacy JSON-only rows still dedupe via
+    ``json_extract`` on ``payload_json`` using the same ``$`` paths as
+    :func:`~heckler.models.serialize_heckle_event`.
+    """
     row = conn.execute(
         """
         SELECT 1 FROM events
-        WHERE json_extract(payload_json, '$.utterance_id') = ?
-          AND json_extract(payload_json, '$.timestamp_iso') = ?
+        WHERE COALESCE(utterance_id, json_extract(payload_json, '$.utterance_id')) = ?
+          AND COALESCE(timestamp_iso, json_extract(payload_json, '$.timestamp_iso')) = ?
         LIMIT 1
         """,
         (utterance_id, timestamp_iso),
     ).fetchone()
     return row is not None
+
+
+def _insert_imported_event(cur: sqlite3.Cursor, event: object, payload_json: str) -> int:
+    """Insert one imported row: ``payload_json`` plus v2 analytics columns and reactor child.
+
+    Mirrors :func:`~heckler.event_store.insert_heckle_event_row` SQL shape but leaves the
+    surrounding transaction to :func:`import_lines` (single commit per file batch).
+    """
+    _ensure_pkg_path()
+    from heckler.event_store import _EVENT_ANALYTICS_COLUMNS, _heckle_event_analytics_params
+
+    col_names = ", ".join(name for name, _ in _EVENT_ANALYTICS_COLUMNS)
+    placeholders = ", ".join("?" for _ in _EVENT_ANALYTICS_COLUMNS)
+    sql = (
+        f"INSERT INTO events (payload_json, correlation_json, {col_names}) "
+        f"VALUES (?, ?, {placeholders})"
+    )
+    params = (payload_json, None) + _heckle_event_analytics_params(event)
+    cur.execute(sql, params)
+    event_id = int(cur.lastrowid)
+    rr = event.reactor_result
+    if rr is not None:
+        cur.execute(
+            """
+            INSERT INTO event_reactor_results (
+                event_id, comment, score, comment_type, raw_response
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                rr.comment,
+                rr.score,
+                rr.comment_type.value,
+                rr.raw_response,
+            ),
+        )
+    return event_id
 
 
 def import_lines(
@@ -73,7 +122,6 @@ def import_lines(
     Returns ``(inserted, skipped_duplicate, skipped_blank, errors)``.
     """
     _ensure_pkg_path()
-    from heckler.event_store import insert_event_row
     from heckler.models import heckle_event_from_json_dict, serialize_heckle_event
 
     inserted = 0
@@ -122,7 +170,7 @@ def import_lines(
             if dry_run:
                 inserted += 1
                 continue
-            insert_event_row(cur, payload_json, None)
+            _insert_imported_event(cur, event, payload_json)
             inserted += 1
         if not dry_run:
             conn.commit()
