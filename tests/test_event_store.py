@@ -181,3 +181,168 @@ def test_tracing_context_overwrite_without_clear() -> None:
     set_correlation({"first": "1"})
     set_correlation({"second": "2"})
     assert get_correlation() == {"second": "2"}
+
+
+def _write_v1_schema_db(path: Path) -> None:
+    """Create an on-disk DB matching schema version 1 (pre-decomposition)."""
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(
+            """
+            PRAGMA foreign_keys=ON;
+            CREATE TABLE heckler_schema_version (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                version INTEGER NOT NULL
+            );
+            INSERT INTO heckler_schema_version (id, version) VALUES (1, 1);
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                payload_json TEXT NOT NULL,
+                correlation_json TEXT
+            );
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_v1_on_disk_database_migrates_to_v2_and_backfills(tmp_path: Path) -> None:
+    """Upgraded fixture: automatic v1→v2 migration per T20 Flag 2."""
+    db_path = tmp_path / "legacy_v1.sqlite"
+    _write_v1_schema_db(db_path)
+    payload = {
+        "utterance_id": "u-migrate",
+        "timestamp_iso": "2026-05-11T12:00:00Z",
+        "transcript": "hello",
+        "semantic_density": 0.42,
+        "passed_density_gate": True,
+        "reactor_result": {
+            "comment": "nice",
+            "score": 0.9,
+            "comment_type": "observation",
+            "raw_response": '{"comment":"nice"}',
+        },
+        "passed_score_gate": True,
+        "passed_pacing_gate": True,
+        "spoken": False,
+        "discard_reason": None,
+        "cooldown_remaining_at_eval": None,
+        "llm_latency_ms": 100.0,
+        "tts_latency_ms": None,
+    }
+    raw_conn = sqlite3.connect(str(db_path))
+    try:
+        raw_conn.execute(
+            "INSERT INTO events (payload_json, correlation_json) VALUES (?, ?)",
+            (json.dumps(payload), '{"completion_id":"c1"}'),
+        )
+        raw_conn.commit()
+    finally:
+        raw_conn.close()
+
+    conn = open_store(db_path)
+    try:
+        init_schema(conn)
+        ver = conn.execute(
+            "SELECT version FROM heckler_schema_version WHERE id = 1"
+        ).fetchone()
+        assert ver is not None and ver[0] == SCHEMA_VERSION
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()}
+        assert "utterance_id" in cols and "semantic_density" in cols
+        row = conn.execute(
+            """
+            SELECT utterance_id, transcript, json_extract(correlation_json, '$.completion_id')
+            FROM events WHERE utterance_id = ?
+            """,
+            ("u-migrate",),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "u-migrate"
+        assert row[1] == "hello"
+        assert row[2] == "c1"
+        (rc,) = conn.execute(
+            "SELECT COUNT(*) FROM event_reactor_results"
+        ).fetchone()
+        assert rc == 1
+        rr = conn.execute(
+            "SELECT comment, score, comment_type FROM event_reactor_results"
+        ).fetchone()
+        assert rr is not None
+        assert rr[0] == "nice" and abs(rr[1] - 0.9) < 1e-9 and rr[2] == "observation"
+    finally:
+        conn.close()
+
+
+def test_init_schema_idempotent_after_v1_migration(tmp_path: Path) -> None:
+    """Second init on an already-migrated file must not duplicate reactor rows."""
+    db_path = tmp_path / "idempotent.sqlite"
+    _write_v1_schema_db(db_path)
+    payload = {
+        "utterance_id": "u1",
+        "timestamp_iso": "2026-05-11T12:00:00Z",
+        "transcript": "x",
+        "semantic_density": 1.0,
+        "passed_density_gate": True,
+        "reactor_result": {
+            "comment": "c",
+            "score": 1.0,
+            "comment_type": "sarcasm",
+            "raw_response": "{}",
+        },
+        "passed_score_gate": True,
+        "passed_pacing_gate": True,
+        "spoken": True,
+        "discard_reason": None,
+        "cooldown_remaining_at_eval": None,
+        "llm_latency_ms": None,
+        "tts_latency_ms": None,
+    }
+    raw_conn = sqlite3.connect(str(db_path))
+    try:
+        raw_conn.execute(
+            "INSERT INTO events (payload_json, correlation_json) VALUES (?, ?)",
+            (json.dumps(payload), None),
+        )
+        raw_conn.commit()
+    finally:
+        raw_conn.close()
+
+    conn = open_store(db_path)
+    try:
+        init_schema(conn)
+        init_schema(conn)
+        (rc,) = conn.execute(
+            "SELECT COUNT(*) FROM event_reactor_results"
+        ).fetchone()
+        assert rc == 1
+    finally:
+        conn.close()
+
+
+def test_v1_migration_skips_invalid_json_payload(tmp_path: Path) -> None:
+    """Invalid ``payload_json`` must not abort migration; normalized columns stay NULL."""
+    db_path = tmp_path / "bad_json.sqlite"
+    _write_v1_schema_db(db_path)
+    raw_conn = sqlite3.connect(str(db_path))
+    try:
+        raw_conn.execute(
+            "INSERT INTO events (payload_json, correlation_json) VALUES (?, ?)",
+            ("not-json", None),
+        )
+        raw_conn.commit()
+    finally:
+        raw_conn.close()
+
+    conn = open_store(db_path)
+    try:
+        init_schema(conn)
+        row = conn.execute(
+            "SELECT utterance_id FROM events WHERE payload_json = ?",
+            ("not-json",),
+        ).fetchone()
+        assert row is not None
+        assert row[0] is None
+    finally:
+        conn.close()
