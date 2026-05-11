@@ -54,6 +54,8 @@ Binding for **all** subtasks. Values that depend on owner choice are **frozen by
 
 **Decision log path (architectural subtasks).** Per executor skill alignment: **T1** → `.dev/decision-logs/T20-event-decomposition-arch.md`; **T2** → `.dev/decision-logs/T21-event-decomposition-schema.md`.
 
+**Landed (T1, 2026-05-11):** Architecture freeze for Flags 1–6 (SSOT, migration, eval storage, vocabulary, import tests, `reactor_result` layout) → `.dev/decision-logs/T20-event-decomposition-arch.md`.
+
 ---
 
 ## 3. Dependency DAG

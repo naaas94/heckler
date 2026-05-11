@@ -4,6 +4,18 @@
 **Date:** 2026-05-11  
 **Source:** Owner question cards (orchestrator escalation)
 
+## Alignment with shared contract §2 (Types / naming)
+
+- **Binding:** `serialize_heckle_event` / `heckle_event_from_json_dict` remain the **semantic definitions** of `HeckleEvent` field meanings and of any JSON shape used for import and for `payload_json` when it is still written. **SSOT for analytics queries** is the **normalized** tables/columns (and any views defined purely on them). Where both JSON and normalized rows exist, **normalized is authoritative for reporting**; `payload_json` may be redundant or legacy until a documented migration removes it.
+- **§2 Naming row:** First-class SQL identifiers for this plan are **frozen here** (T2 may add indexes, constraints, and extra columns only where they do not rename or split these objects without an amendment):
+  - **`event_reactor_results`** — optional child row(s) per `events.id` holding exploded `ReactorResult` / nested reactor fields (FK **`event_id`** → `events.id`; exact column set in T21).
+  - **`heckler_eval_labels`** — dataset / hosted-style evaluation labels and related metadata joined to events (exact columns in T21; disambiguated from pacing vocabulary per Flag 4).
+- **CLI:** No new `import_legacy_jsonl.py` flags are frozen by T1; **T4** owns any future CLI strings per §2 CLI-as-contract rule.
+
+## Files added (executor / audit)
+
+- `tests/test_t20_event_decomposition_architecture_log.py` — regression guard that Flags 1–6 retain explicit **Landed** resolutions (see adversarial note in test module docstring).
+
 ## Binding decisions
 
 ### Flag 1 — Source of truth (SSOT)
@@ -29,7 +41,7 @@
 
 ### Flag 6 — `reactor_result` physical layout
 
-- **Landed:** **`reactor_result` is stored in a child table** keyed to the parent event row (keying choice: `events.id` or equivalent stable FK **frozen in T21**). Nested JSON for reactor fields is **not** the canonical analytics source once child table lands; any retained JSON must be labeled **redundant** or **legacy** in T21 if still written.
+- **Landed:** **`reactor_result` is stored in a child table** named **`event_reactor_results`** (see §Alignment), keyed to the parent event row via **`event_id`** → `events.id` (column details **frozen in T21**). Nested JSON for reactor fields is **not** the canonical analytics source once the child table lands; any retained JSON must be labeled **redundant** or **legacy** in T21 if still written.
 
 ## Explicit non-goals (reaffirmed)
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## sqlite-event-decomposition-analytics — 2026-05-11
+
+Plan: decompose persisted `events.payload_json` into relational structure for post hoc SQL analytics while preserving `HeckleEvent` JSON contracts and the legacy JSONL import path. Full decomposition: `.dev/plans/sqlite-event-decomposition-analytics/plan.md`.
+
+- **T1 (Architecture decision freeze):** Landed owner resolutions for context-map Flags 1–6 in `.dev/decision-logs/T20-event-decomposition-arch.md` — normalized SSOT for analytics with `serialize_heckle_event` / `heckle_event_from_json_dict` still defining field semantics; automatic `init_schema`-path migration with pytest fixture coverage; eval-adjacent tables in the same DB file; dual “eval” vocabulary with doc disambiguation owned by T5; **required** pytest for import/dedupe/insert paths touched by decomposition; `reactor_result` in child table **`event_reactor_results`** (FK `event_id`); dataset-eval table name **`heckler_eval_labels`**. **Rationale:** Removes executor guesswork on SSOT, migration, and test policy before T2–T5 land DDL and writers. **Decision log:** `.dev/decision-logs/T20-event-decomposition-arch.md`. **+** `tests/test_t20_event_decomposition_architecture_log.py` (flags 1–6 **Landed** presence guard).
+
 ## sqlite-local-db-obs-langfuse
 
 Plan: replace append-only JSONL under `**log_dir**` with **SQLite** as the sole steady-state event store (stdlib `**sqlite3`**), add reactor-local **LiteLLM** tracing hooks and correlation into persisted rows, and keep scope minimal (no eval UI, no audio in DB). Full decomposition and auditor handoff (plan **v1.1.0**, §8): `.dev/plans/sqlite-local-db-obs-langfuse/plan.md`.
