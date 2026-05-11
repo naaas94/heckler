@@ -181,7 +181,7 @@ graph TD
 | Tuple | Status |
 |--------|--------|
 | `(Logger lock wraps insert \| §2 Types / HecklerLogger + sqlite transaction semantics \| Long-held lock during migration or multi-insert \| T3` | **suspected** — disproven by keeping migrations outside `log_event` or short transactions. |
-| `(import_legacy_jsonl uses insert_event_row directly \| §2 Types / insert_event_row \| If T3 changes commit ownership (cursor vs connection), import may double-commit or not commit \| T4` | **confirmed** — T4 must match `event_store` commit semantics. |
+| `(import_legacy_jsonl mirrors insert_heckle_event_row SQL \| §2 Types / transactional insert \| If T3 changes commit ownership (cursor vs connection), import may double-commit or not commit \| T4` | **confirmed** — T4 matches `event_store` commit semantics (one `commit` per `import_lines` batch; inlined SQL aligned with `insert_heckle_event_row`). |
 | `(Correlation key names consumed by future SQL views \| §2 Types / correlation_json key names from reactor \| External dashboards break if renamed independently \| T2,T5` | **suspected** — disproven by documenting frozen key set in T1/T5. |
 
 ---

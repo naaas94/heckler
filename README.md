@@ -71,6 +71,20 @@ The `pyproject.toml` console script entry point `heckler` also resolves to `heck
 
 Structured events are written to the SQLite file configured by `HECKLER_DATABASE_PATH` (default `logs/heckler.db`). Startup progress lines prefixed with `[HECKLER]` go to stdout and are not stored as event rows.
 
+In persisted `HeckleEvent` rows, `cooldown_remaining_at_eval` comes from the **pacing gate** (`PacingGate.evaluate`); optional dataset-style evaluation metadata (when present) uses separate tables such as `heckler_eval_labels`—do not read “eval” in column names as hosted scoring unless you mean that table.
+
+### Legacy JSONL import
+
+Steady-state logging is SQLite only. To load historical `heckler_*.jsonl` lines into the same `events` shape as live logging, from the repo root (after `pip install -e .`):
+
+```bash
+python scripts/import_legacy_jsonl.py [--database PATH] [--dry-run] [--skip-existing] FILE [FILE ...]
+```
+
+- `--database` / `-d`: SQLite file (default: non-empty `HECKLER_DATABASE_PATH` or `logs/heckler.db`).
+- `--dry-run`: parse and validate only; no writes.
+- `--skip-existing`: skip lines whose `(utterance_id, timestamp_iso)` pair already exists (uses JSON1 `json_extract` on `payload_json` when needed).
+
 ## First run
 
 On the first launch you should expect **downloads**: Silero VAD weights via `torch.hub`, faster-whisper model files into the Hugging Face cache, and Kokoro assets when `Speaker` initializes. Subsequent starts reuse cached weights where possible.

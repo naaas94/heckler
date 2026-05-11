@@ -1,4 +1,4 @@
-"""Pipeline orchestration: threaded capture → transcribe → react → TTS + JSONL logging."""
+"""Pipeline orchestration: threaded capture → transcribe → react → TTS with SQLite event persistence."""
 
 from __future__ import annotations
 

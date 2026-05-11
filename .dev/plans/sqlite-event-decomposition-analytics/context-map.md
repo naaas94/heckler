@@ -16,7 +16,7 @@
 
 **Root paths explored:**
 
-- `heckler/event_store.py` — Owns `events` / `heckler_schema_version` DDL, `insert_event_row`, and `SCHEMA_VERSION`; any new tables, generated columns, or migrations land here first.
+- `heckler/event_store.py` — Owns `events` / `heckler_schema_version` DDL, `insert_event_row` (JSON-only rows), `insert_heckle_event_row` (live logger / normalized v2 shape), and `SCHEMA_VERSION`; any new tables, generated columns, or migrations land here first.
 - `heckler/logger.py` — Sole steady-state writer of `payload_json` / `correlation_json`; decomposition at insert time would touch this path.
 - `heckler/models.py` — `HeckleEvent`, `ReactorResult`, enums, `serialize_heckle_event` / `heckle_event_from_json_dict`; normalized columns must stay consistent with this contract or the contract must change in lockstep.
 - `heckler/pipeline.py` — Constructs every `HeckleEvent` passed to `log_event`; determines which fields are populated per path (density skip, reactor failure, pacing, TTS error, success).
@@ -39,8 +39,8 @@
 
 | path | role | in_task_scope | rationale |
 |------|------|----------------|-----------|
-| `heckler/event_store.py` | SQLite open/init/insert for `events` + schema version | direct | DDL and `insert_event_row` are the persistence contract for decomposition (new tables, triggers, or column adds). |
-| `heckler/logger.py` | `HecklerLogger`: opens DB, `log_event` → JSON payload + correlation | direct | Any write-time denormalization or multi-table insert runs here alongside `serialize_heckle_event`. |
+| `heckler/event_store.py` | SQLite open/init/insert for `events` + schema version | direct | DDL, `insert_heckle_event_row`, and `insert_event_row` are the persistence contract for decomposition (new tables, triggers, or column adds). |
+| `heckler/logger.py` | `HecklerLogger`: opens DB, `log_event` → `insert_heckle_event_row` (`payload_json` + correlation + normalized columns) | direct | Any write-time denormalization or multi-table insert runs here alongside `serialize_heckle_event`. |
 | `heckler/models.py` | Domain types, `serialize_heckle_event`, JSON round-trip helpers | direct | Field set and nested `reactor_result` shape define what “exploded” columns or child rows mean. |
 | `heckler/pipeline.py` | Threaded pipeline, `HeckleEvent` construction, `main` | direct | All persisted events originate here; changing which fields are set affects analytics nullability. |
 | `heckler/config.py` | `HecklerConfig`, `load_config`, DB path env | transitive | `sqlite_database_path` / `HECKLER_DATABASE_PATH` bound the DB file for any new tables. |
@@ -54,9 +54,9 @@
 | `heckler/transcriber.py` | faster-whisper wrapper | transitive | Upstream of utterance text. |
 | `heckler/__main__.py` | Entry shim to `pipeline.main` | transitive | Startup only. |
 | `heckler/__init__.py` | Package version | transitive | |
-| `scripts/import_legacy_jsonl.py` | Legacy JSONL → `insert_event_row` | direct | Uses `json_extract` on `payload_json`; decomposition changes may require import updates or backfill scripts. |
+| `scripts/import_legacy_jsonl.py` | Legacy JSONL → SQLite `events` (SQL mirrors `insert_heckle_event_row`; one commit per batch in `import_lines`) | direct | Uses `json_extract` on `payload_json` for dedupe; decomposition changes may require import updates or backfill scripts. |
 | `pyproject.toml` | Dependencies, `heckler` console script | direct | New persistence deps (e.g. SQLAlchemy) would be declared here if scope abandons stdlib-only store. |
-| `tests/test_event_store.py` | Store + tracing_context tests | transitive | Asserts DDL, `insert_event_row`, schema version, concurrency smoke. |
+| `tests/test_event_store.py` | Store + tracing_context tests | transitive | Asserts DDL, `insert_event_row` / `insert_heckle_event_row`, schema version, concurrency smoke. |
 | `tests/test_context_buffer_and_logger.py` | Logger SQLite persistence + correlation | transitive | Asserts `payload_json` matches `serialize_heckle_event`, correlation rows, insert failure behavior. |
 | `tests/test_models.py` | Config + model serialization tests | transitive | `HECKLER_DATABASE_PATH`, `serialize_heckle_event` / `heckle_event_from_json_dict`. |
 | `tests/test_pipeline.py` | Pipeline integration, mocked logger | transitive | `log_event` call sites and event shapes. |
@@ -76,10 +76,11 @@
 
 | symbol | kind | signature | consumed_by | stability | test_file |
 |--------|------|-----------|-------------|-----------|-----------|
-| `SCHEMA_VERSION` | constant | `int` (= 1) | tests, init_schema mismatch handling | suspect_modified | `tests/test_event_store.py` |
-| `open_store` | function | `(path: Path) -> sqlite3.Connection` | `HecklerLogger.__init__`, tests, scripts (indirect via logger pattern) | suspect_modified | `tests/test_event_store.py` |
+| `SCHEMA_VERSION` | constant | `int` (= 2) | tests, init_schema mismatch handling | suspect_modified | `tests/test_event_store.py` |
+| `open_store` | function | `(path: Path) -> sqlite3.Connection` | `HecklerLogger.__init__`, tests, import script | suspect_modified | `tests/test_event_store.py` |
 | `init_schema` | function | `(conn: sqlite3.Connection) -> None` | `HecklerLogger.__init__`, tests, import script | suspect_modified | `tests/test_event_store.py` |
-| `insert_event_row` | function | `(conn_or_cursor: sqlite3.Connection \| sqlite3.Cursor, payload_json: str, correlation_json: str \| None = None) -> int` | `HecklerLogger.log_event`, `scripts/import_legacy_jsonl.py`, tests | suspect_modified | `tests/test_event_store.py`, `tests/test_context_buffer_and_logger.py` |
+| `insert_event_row` | function | `(conn_or_cursor: sqlite3.Connection \| sqlite3.Cursor, payload_json: str, correlation_json: str \| None = None) -> int` | tests (JSON-only / fixture paths) | suspect_modified | `tests/test_event_store.py`, `tests/test_import_legacy_jsonl.py` |
+| `insert_heckle_event_row` | function | `(conn: sqlite3.Connection, *, event: HeckleEvent, payload_json: str, correlation_json: str \| None = None) -> int` | `HecklerLogger.log_event`, tests | suspect_modified | `tests/test_event_store.py`, `tests/test_context_buffer_and_logger.py` |
 
 ### `heckler/logger.py`
 
