@@ -86,16 +86,78 @@ def test_logger_persists_event_row(tmp_path):
     conn = sqlite3.connect(str(db_file))
     try:
         row = conn.execute(
-            "SELECT payload_json, correlation_json FROM events ORDER BY id DESC LIMIT 1"
+            """
+            SELECT id, payload_json, correlation_json, utterance_id, semantic_density,
+                   discard_reason, passed_score_gate
+            FROM events ORDER BY id DESC LIMIT 1
+            """
+        ).fetchone()
+        assert row is not None
+        eid, payload_raw, corr_raw, utt, dens, dr, psg = row
+        payload = json.loads(payload_raw)
+        assert payload["reactor_result"]["comment_type"] == "observation"
+        assert payload["discard_reason"] == "score_gate"
+        assert "audio_chunk" not in json.dumps(payload)
+        assert corr_raw is None
+        assert utt == event.utterance_id
+        assert abs(dens - event.semantic_density) < 1e-9
+        assert dr == "score_gate"
+        assert psg == 1
+        rr = conn.execute(
+            "SELECT event_id, comment, score, comment_type FROM event_reactor_results WHERE event_id = ?",
+            (eid,),
+        ).fetchone()
+        assert rr is not None
+        assert rr[0] == eid and rr[1] == "x" and abs(rr[2] - 0.9) < 1e-9 and rr[3] == "observation"
+    finally:
+        conn.close()
+
+
+def test_logger_normalized_columns_mirror_heckle_event_without_json_parse(tmp_path):
+    """Falsifier: if the logger only wrote ``payload_json`` and left analytics columns NULL,
+    scalar reads would drift from the in-memory ``HeckleEvent`` contract."""
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "db.sqlite"))
+    logger = HecklerLogger(cfg)
+    event = _minimal_event(
+        transcript="sql-column-mirror",
+        semantic_density=0.77,
+        passed_score_gate=False,
+        llm_latency_ms=123.4,
+    )
+    logger.log_event(event)
+    conn = sqlite3.connect(str(tmp_path / "db.sqlite"))
+    try:
+        row = conn.execute(
+            """
+            SELECT transcript, semantic_density, passed_score_gate, llm_latency_ms
+            FROM events ORDER BY id DESC LIMIT 1
+            """
         ).fetchone()
     finally:
         conn.close()
     assert row is not None
-    payload = json.loads(row[0])
-    assert payload["reactor_result"]["comment_type"] == "observation"
-    assert payload["discard_reason"] == "score_gate"
-    assert "audio_chunk" not in json.dumps(payload)
-    assert row[1] is None
+    assert row[0] == "sql-column-mirror"
+    assert abs(row[1] - 0.77) < 1e-9
+    assert row[2] == 0
+    assert abs(row[3] - 123.4) < 1e-9
+
+
+def test_logger_no_event_reactor_results_row_when_reactor_absent(tmp_path):
+    """Falsifier: spurious child rows would break one-event-one-reactor analytics joins."""
+    cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "db.sqlite"))
+    logger = HecklerLogger(cfg)
+    event = _minimal_event(reactor_result=None)
+    logger.log_event(event)
+    conn = sqlite3.connect(str(tmp_path / "db.sqlite"))
+    try:
+        (eid,) = conn.execute("SELECT id FROM events ORDER BY id DESC LIMIT 1").fetchone()
+        (rc,) = conn.execute(
+            "SELECT COUNT(*) FROM event_reactor_results WHERE event_id = ?",
+            (eid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert rc == 0
 
 
 def test_logger_payload_matches_serialize_heckle_event(tmp_path):
@@ -174,7 +236,7 @@ def test_logger_insert_failure_logs_error_and_raises(tmp_path, monkeypatch, capl
     def boom(*args, **kwargs):
         raise sqlite3.OperationalError("disk I/O error")
 
-    monkeypatch.setattr(logger_module, "insert_event_row", boom)
+    monkeypatch.setattr(logger_module, "insert_heckle_event_row", boom)
     caplog.set_level(logging.ERROR)
     with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
         logger.log_event(_minimal_event())
@@ -189,7 +251,7 @@ def test_logger_clears_correlation_after_failed_insert(tmp_path, monkeypatch):
     def boom(*args, **kwargs):
         raise sqlite3.OperationalError("fail")
 
-    monkeypatch.setattr(logger_module, "insert_event_row", boom)
+    monkeypatch.setattr(logger_module, "insert_heckle_event_row", boom)
     with pytest.raises(sqlite3.OperationalError):
         logger.log_event(_minimal_event())
     assert get_correlation() is None
@@ -197,6 +259,9 @@ def test_logger_clears_correlation_after_failed_insert(tmp_path, monkeypatch):
 
 # Adversarial gap addressed: ``log_event`` uses ``serialize_heckle_event`` only — if a
 # duplicate coercion path were reintroduced on the logger, this equality check would drift.
+# Deferred falsifier: ``insert_heckle_event_row`` rollback after a failed child insert
+# (would need deterministic second-statement fault injection; SQLite transaction tests
+# elsewhere cover commit/rollback semantics).
 def test_logger_row_payload_equals_models_projection(tmp_path, monkeypatch):
     cfg = HecklerConfig(sqlite_database_path=str(tmp_path / "db.sqlite"))
     logger = HecklerLogger(cfg)

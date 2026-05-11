@@ -1,7 +1,9 @@
 """SQLite persistence for heckler structured events (stdlib ``sqlite3`` only).
 
 Call :func:`open_store`, then :func:`init_schema` once per database file, then
-:func:`insert_event_row` for each event. Payload and correlation are stored as JSON **text**
+:func:`insert_event_row` (JSON-only rows) or :func:`insert_heckle_event_row` (live logger path:
+JSON plus normalized columns and optional ``event_reactor_results`` in one transaction).
+Payload and correlation are stored as JSON **text**
 (UTF-8); callers pass already-serialized strings (e.g. ``json.dumps``).
 
 Schema version **2** adds normalized ``events`` columns (mirroring :class:`~heckler.models.HeckleEvent`
@@ -16,6 +18,8 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
+
+from heckler.models import HeckleEvent
 
 logger = logging.getLogger(__name__)
 
@@ -260,3 +264,79 @@ def insert_event_row(
 
     conn_or_cursor.execute(sql, params)
     return int(conn_or_cursor.lastrowid)
+
+
+def _heckle_event_analytics_params(event: HeckleEvent) -> tuple:
+    """Bind tuple for ``_EVENT_ANALYTICS_COLUMNS`` order (SQLite affinities)."""
+    dr = event.discard_reason.value if event.discard_reason is not None else None
+    return (
+        event.utterance_id,
+        event.timestamp_iso,
+        event.transcript,
+        float(event.semantic_density),
+        int(event.passed_density_gate),
+        None if event.passed_score_gate is None else int(event.passed_score_gate),
+        None if event.passed_pacing_gate is None else int(event.passed_pacing_gate),
+        int(event.spoken),
+        dr,
+        event.cooldown_remaining_at_eval,
+        event.llm_latency_ms,
+        event.tts_latency_ms,
+    )
+
+
+def insert_heckle_event_row(
+    conn: sqlite3.Connection,
+    *,
+    event: HeckleEvent,
+    payload_json: str,
+    correlation_json: str | None = None,
+) -> int:
+    """Insert one persisted event for the live logger: ``payload_json`` plus normalized columns.
+
+    Writes the same ``payload_json`` string the caller built from
+    :func:`~heckler.models.serialize_heckle_event` (round-trip / import contract). Populates
+    analytics columns on ``events`` per schema v2. When ``event.reactor_result`` is set,
+    inserts one row into ``event_reactor_results`` keyed by the new ``events.id``.
+
+    The parent insert and optional child insert run in a **single SQLite transaction**
+    (``commit`` on success, ``rollback`` on failure). Intended for the shared logger
+    connection after :func:`init_schema`; do not interleave with other manual transactions
+    on the same connection unless you rely on SQLite's single active transaction semantics.
+    """
+    col_names = ", ".join(name for name, _ in _EVENT_ANALYTICS_COLUMNS)
+    placeholders = ", ".join("?" for _ in _EVENT_ANALYTICS_COLUMNS)
+    sql_events = (
+        f"INSERT INTO events (payload_json, correlation_json, {col_names}) "
+        f"VALUES (?, ?, {placeholders})"
+    )
+    params_events = (payload_json, correlation_json) + _heckle_event_analytics_params(event)
+
+    cur = conn.cursor()
+    try:
+        cur.execute(sql_events, params_events)
+        event_id = int(cur.lastrowid)
+        rr = event.reactor_result
+        if rr is not None:
+            cur.execute(
+                """
+                INSERT INTO event_reactor_results (
+                    event_id, comment, score, comment_type, raw_response
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    rr.comment,
+                    rr.score,
+                    rr.comment_type.value,
+                    rr.raw_response,
+                ),
+            )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+    return event_id
