@@ -1,7 +1,9 @@
 # Orchestrator plan — sqlite-event-decomposition-analytics
 
-**Orchestrator skill version:** 0.5 (user-attached)  
-**Plan status:** **Executable** — owner resolutions landed in `.dev/decision-logs/T20-event-decomposition-arch.md` (2026-05-11). Context-map CONDITIONAL flags are addressed for execution; §0 staleness note still applies to line-level map citations.
+**Orchestrator skill version:** 0.6 (auditor handoff)  
+**Plan status:** **Complete** — T1–T5 execution landed; **§8** auditor handoff below. Application code pinned at **§8.1** SHA.
+
+**Plan version note:** §0–§2 were drafted under skill 0.5; **§8** and binding-artifact language below align with **0.6**.
 
 ---
 
@@ -13,9 +15,11 @@
 | **Readiness verdict** | **CONDITIONAL** (verbatim from map) |
 | **Scope-area labels (ambiguity flags)** | persistence, analytics; observability; pipeline (Flag 4 vocabulary) |
 | **Map metadata** | pre-plan-exploration **v0.2**; map **Commit SHA:** `7d5b1f0b5eb97088b4d4826e868a79dee1bdd4c8` |
-| **Current repo HEAD (staleness check)** | `11f5c662e38c93c37e433c80c54b39b642fb211c` — **differs** from map SHA; executors MUST re-read touched files (`heckler/event_store.py`, `heckler/logger.py`, `heckler/models.py`) before relying on line-level citations from the map. |
+| **Current repo HEAD (staleness check)** | **Application baseline SHA:** `adc6b2c73e10e71d99dbbcf88c1fbf965b166d4c` (see **§8.1**). Context-map SHA `7d5b1f0…` remains **stale** for line-level citations; prefer **§8.5** code paths and **T21** supersession banner. |
 
-**BLOCKED?** No — planning proceeds per CONDITIONAL rules: §5.2 lists every ambiguity flag; each subtask whose scope touches persistence/analytics includes a kill criterion referencing unresolved flags at execution start.
+**Binding-artifact resolvability (skill 0.6):** Every binding source cited in this plan resolves to a **tracked** path (`git ls-files` at §8.1 SHA): context map, this plan, packets **T1–T5**, **T20**, **T21**. No out-of-tree normative artifacts.
+
+**BLOCKED?** No — planning proceeded per CONDITIONAL rules; owner resolutions (T20) unblocked execution.
 
 ### Owner resolutions (question cards → T1 artifact)
 
@@ -55,6 +59,16 @@ Binding for **all** subtasks. Values that depend on owner choice are **frozen by
 **Decision log path (architectural subtasks).** Per executor skill alignment: **T1** → `.dev/decision-logs/T20-event-decomposition-arch.md`; **T2** → `.dev/decision-logs/T21-event-decomposition-schema.md`.
 
 **Landed (T1, 2026-05-11):** Architecture freeze for Flags 1–6 (SSOT, migration, eval storage, vocabulary, import tests, `reactor_result` layout) → `.dev/decision-logs/T20-event-decomposition-arch.md`.
+
+**Landed (implementation, application SHA `adc6b2c73e10e71d99dbbcf88c1fbf965b166d4c`):**
+
+- **`SCHEMA_VERSION` = 2**; **`init_schema`** runs automatic **v1→v2** migration (`BEGIN IMMEDIATE`, commit/rollback) with JSON1 backfill — `heckler/event_store.py`.
+- **Live path:** **`insert_heckle_event_row`** (single transaction: parent row + optional **`event_reactor_results`** child) — called from **`HecklerLogger.log_event`** under **`threading.Lock`** — `heckler/logger.py`.
+- **Legacy path:** **`insert_event_row`** retained for JSON-only inserts (tests / transitional); import uses normalized insert shape aligned with **`insert_heckle_event_row`** — `scripts/import_legacy_jsonl.py`.
+- **DDL:** **`events`** analytics columns (mirror `HeckleEvent` scalars), **`event_reactor_results`**, **`heckler_eval_labels`** (reserved; no writer yet).
+- **SSOT alignment:** Per **T20**, **normalized columns + child table** are authoritative for analytics; **`payload_json`** still written for round-trip/import (see module docstring in `event_store.py`).
+
+*Illustrative only:* older §2 table rows that describe **`insert_event_row` as the sole logger path** describe pre-v2 behavior and are **superseded** by the bullets above and **T21** supersession banner.
 
 ---
 
@@ -206,6 +220,77 @@ None at plan authoring time. Use §7 if post-audit findings require a narrow doc
 
 ---
 
+## 8. Auditor handoff
+
+**Plan marked Complete** with §8 produced per orchestrator skill **0.6**.
+
+### 8.1 Completion snapshot
+
+| Field | Value |
+|--------|--------|
+| **Application / test SHA (verified)** | `adc6b2c73e10e71d99dbbcf88c1fbf965b166d4c` — `heckler/`, `tests/`, `scripts/` match this commit (`git diff <sha> HEAD -- heckler tests scripts` empty on branch tip). **pytest** run on a **clean** checkout of this tree. |
+| **Plan §8 / decision-log revision** | Tracked in **this** `plan.md` commit on your branch; use `git log -1 --format=%H -- .dev/plans/sqlite-event-decomposition-analytics/plan.md` for the doc-only revision id. |
+| **Working tree** | **clean** at verification time (`git status` — nothing to commit) |
+| **Verification command** | `pytest tests/ -q --tb=no` |
+| **Result** | **132 passed**; exit code **0**; elapsed **~7.05s** (local run, Windows) |
+| **Interpreter** | Shell `pytest` as configured for the repo |
+
+**Auditor note (skill 0.6):** If the tip commit changes only `.dev/` after the application SHA above, re-running `pytest` on the tip is equivalent for **code** behavior; if **application** files change, re-baseline the first row and re-run tests.
+
+### 8.2 Artifact chain (read order)
+
+Auditor `git show HEAD:<path>` must succeed for each path at the branch tip. Application code is pinned to the **§8.1 application SHA**; `.dev/` artifacts follow the **latest** commit that contains this `plan.md`.
+
+1. `.dev/plans/sqlite-event-decomposition-analytics/context-map.md` — *staleness: map commit ≠ handoff SHA; use for intent only*
+2. `.dev/plans/sqlite-event-decomposition-analytics/plan.md` — *this file*
+3. `.dev/decision-logs/T20-event-decomposition-arch.md`
+4. `.dev/decision-logs/T21-event-decomposition-schema.md` — *read **supersession** banner first*
+5. `.dev/plans/sqlite-event-decomposition-analytics/packets/T1.md` … `T5.md`
+6. **§7 amendments:** none
+
+### 8.3 §2 evidence (landed signals)
+
+| §2 topic | Shipped surface | Test / check |
+|----------|-----------------|--------------|
+| **Types / schema** | `heckler/event_store.py`: `SCHEMA_VERSION`, `init_schema`, `_migrate_v1_to_v2`, `_EVENT_ANALYTICS_COLUMNS`, `insert_event_row`, `insert_heckle_event_row` | `tests/test_event_store.py` (`test_v1_on_disk_database_migrates_to_v2_and_backfills`, idempotent migration, invalid JSON skip, version mismatch) |
+| **Types / logger** | `heckler/logger.py`: `HecklerLogger.log_event` → `insert_heckle_event_row` | `tests/test_context_buffer_and_logger.py` (payload vs model, normalized columns, reactor child, correlation, concurrency, error paths) |
+| **Types / import** | `scripts/import_legacy_jsonl.py`: `import_lines`, `_pair_exists`, `_insert_imported_event` | `tests/test_import_legacy_jsonl.py` |
+| **Types / models** | `heckler/models.py`: `serialize_heckle_event`, `heckle_event_from_json_dict` | `tests/test_models.py` |
+| **Eval DDL (reserved)** | `heckler_eval_labels` in `init_schema` | **Gap:** no dedicated `sqlite_master` / `PRAGMA` assertion; existence follows from `_ensure_auxiliary_tables` on any `init_schema` — auditor spot-check recommended |
+| **Error envelope** | `RuntimeError` unsupported / future schema | `tests/test_event_store.py::test_schema_version_mismatch_raises` |
+| **Naming / T20** | Flag headings + table names | `tests/test_t20_event_decomposition_architecture_log.py` |
+| **Logging** | `logger.info` on v1→v2 migration | **No** log-line assertion; **auditor manual** or treat as non-critical |
+| **Tests policy** | pytest suite | §8.1 command |
+| **CLI** | `import_legacy_jsonl.py` argparse (`--database`, `--dry-run`, `--skip-existing`, …) | **Gap:** tests exercise `import_lines` only, not subprocess CLI — **open** for full argv contract |
+
+### 8.4 §5 disposition
+
+| Item | § | Disposition | Notes |
+|------|---|-------------|--------|
+| Single-row insert API sufficient | 5.2 | **closed** | Superseded: `insert_heckle_event_row` + transaction; tests cover parent+child |
+| JSON keys stable for dedupe | 5.2 | **closed** | `tests/test_import_legacy_jsonl.py` + COALESCE dedupe |
+| Owners respond / T1 | 5.2 | **closed** | T20 + `test_t20_*` |
+| stdlib sqlite3 | 5.2 | **closed** | No ORM in shipped deps |
+| Logger lock + long transaction | 5.4 | **closed** | `HecklerLogger` holds lock across `insert_heckle_event_row`; `test_logger_concurrent_inserts_serialized` |
+| Import mirrors store SQL / commit | 5.4 | **confirmed closed** | `import_lines` batch transaction; tests |
+| Correlation key names / dashboards | 5.4 | **treat-as-prediction** | Reactor mapping unchanged this plan; external consumers out of repo |
+| Deferred falsifier: child insert failure rollback | — | **open** | Comment in `tests/test_context_buffer_and_logger.py` — *runtime-armed only* until fault injection exists |
+
+### 8.5 Cold-read seeds
+
+1. `heckler/event_store.py` — schema version, migration, insert APIs  
+2. `heckler/logger.py` — lock + transaction boundary  
+3. `scripts/import_legacy_jsonl.py` — dedupe + insert shape  
+4. `tests/test_event_store.py` — v1 fixture migration  
+5. `tests/test_import_legacy_jsonl.py` — T4 contract  
+6. `tests/test_context_buffer_and_logger.py` — live path + reactor child  
+
+### 8.6 Audit remediation cross-link
+
+*Omitted* — no §7 amendments filed for this plan version.
+
+---
+
 ## Validation checklist (orchestrator)
 
 1. Subtask fields complete — **yes**  
@@ -221,7 +306,11 @@ None at plan authoring time. Use §7 if post-audit findings require a narrow doc
 11. §5 tuples attributable to Tn — **yes**  
 12. Packet-only lens — **yes**  
 13. Context map — **consumed**; no “unknown — discovery required” without map  
+14. **Kill-criteria falsifiability** — **reviewed:** one **open** item documented in **§8.4** (child-insert rollback falsifier); others have tests or explicit waivers  
+15. **§8.1 completion snapshot** — **valid** (clean tree; pytest on application SHA; plan/doc revision called out per skill 0.6 self-SHA constraint)  
+16. **§8.2 artifact chain** — **resolves at HEAD** for listed paths  
+17. **§8.4 §5 disposition** — **complete** (every §5.2 / §5.4 row marked)  
 
-**Plan complete** ~~pending owner answers that unblock T1 execution~~ **→ Owner resolutions landed 2026-05-11** in `.dev/decision-logs/T20-event-decomposition-arch.md` (normalized SSOT, auto migration with fixtures, eval tables in same DB, dual “eval” vocabulary with doc disambiguation, import tests required, `reactor_result` in child table). **T1** may be marked satisfied by that log; executors for **T2+** proceed per DAG using T20 as resolved input.
+**Complete:** Execution landed; **auditor starts at §8** then §8.5 cold-read seeds.
 
-**Retired-string / packet note:** Packets were authored under CONDITIONAL ambiguity; they remain structurally valid, but **T2–T4** implementations must treat **T20** as superseding any “JSON canonical” examples in §1/§2 prose within those packets. Prefer **T20 + this §** as binding for SSOT and reactor layout.
+**Retired-string / packet note:** Historical packets may still read “JSON canonical”; **T20**, **T21** supersession banner, and **§2 *Landed (implementation)*** supersede conflicting prose.

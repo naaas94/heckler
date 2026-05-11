@@ -1,5 +1,7 @@
 # T21 — Event decomposition schema (SQLite v2)
 
+> **Supersession (implementation landed):** The **“Items deferred”** bullets for **T3** (live insert populating normalized columns) and **T4** (`import_legacy_jsonl.py` alignment) were satisfied after this log was first written. **Authoritative behavior** is **`heckler/event_store.py`**, **`heckler/logger.py`**, and **`scripts/import_legacy_jsonl.py`** at repo **HEAD** together with **`tests/test_context_buffer_and_logger.py`**, **`tests/test_import_legacy_jsonl.py`**, and migration tests in **`tests/test_event_store.py`**. The **“Chosen approach”** / **“Alternatives rejected”** sections below remain the design record.
+
 **Plan:** `sqlite-event-decomposition-analytics`  
 **Date:** 2026-05-11  
 **Subtask:** T2  
