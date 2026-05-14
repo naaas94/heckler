@@ -10,6 +10,7 @@ import numpy as np
 
 class CommentType(str, Enum):
     SARCASM = "sarcasm"
+    DEFLATION = "deflation"
     CALLBACK = "callback"
     OBSERVATION = "observation"
     ABSURDIST = "absurdist"
