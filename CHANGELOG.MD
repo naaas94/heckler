@@ -1,5 +1,17 @@
 # Changelog
 
+## persona-system — 2026-05-16
+
+Plan: directory-per-persona bundles under `prompts/<name>/` with TOML manifest, swappable prompts and config overrides, wired later through pipeline and `HecklerConfig`. Full decomposition: `.dev/plans/persona-system/plan.md`.
+
+- **T1 (Persona module):** Added **`heckler/persona.py`** — **`Persona`** dataclass, **`load_persona`**, **`list_personas`**, **`apply_persona_overrides`**, **`PersonaNotFoundError`**, stdlib **`tomllib`** loading, §2 TOML→**`HecklerConfig`** flattening (including **`pacing_interval` → `min_output_interval_s`**), **`[output].comment_types`** omitted from overrides, and contract logging on load / unknown override keys. **`+`** **`tests/test_persona.py`**. **Rationale:** Centralizes persona bundle I/O and override merge so later tasks (reactor, config env, pipeline) share one mapping surface. **Decision log:** `.dev/decision-logs/persona-system-T1.md`.
+
+## transcription-engine — 2026-05-16
+
+Plan: transcribe-only pipeline mode (AudioCapture + Whisper persistence, CLI `--mode`, VAD overrides) without persona-mode regressions. Full decomposition: `.dev/plans/transcription-engine/plan.md`.
+
+- **T1 (Transcript SQLite store):** Added **`heckler/transcript_store.py`** with **`TRANSCRIPT_SCHEMA_VERSION`**, **`TranscriptSession`** / **`TranscriptChunk`**, **`init_transcript_schema`**, **`create_session`**, **`close_session`**, **`insert_chunk`**, **`get_session`**, and **`get_chunks`** for tables **`transcript_sessions`**, **`transcript_chunks`**, and **`transcript_schema_version`** (separate from **`heckler_schema_version`**; no FK to **`events`**). Callers reuse **`heckler.event_store.open_store`** for connections. **`tests/test_transcript_store.py`** covers init/version rejection, session lifecycle, chunk ordering, FK failure on unknown session, and double-close idempotency. **Rationale:** Isolates transcript DDL from event-store migrations while keeping one DB file per config. **Decision log:** `.dev/decision-logs/TE-T1.md`. **Deferred (audit-visible):** **`export_session_markdown`** is named in plan §2 for this module but is scoped to **T2**; no markdown-export falsifier until that subtask lands. **Deferred:** forward migrations when **`TRANSCRIPT_SCHEMA_VERSION`** increments are **`RuntimeError`** only until a follow-on defines upgrade steps.
+
 ## sqlite-event-decomposition-analytics — 2026-05-11
 
 Plan: decompose persisted `events.payload_json` into relational structure for post hoc SQL analytics while preserving `HeckleEvent` JSON contracts and the legacy JSONL import path. Full decomposition: `.dev/plans/sqlite-event-decomposition-analytics/plan.md`.
