@@ -375,7 +375,7 @@ Executor evidence on **2026-05-16** (worktree had unrelated dirty paths; invento
 | T4 — Config update | `3967dc7` | ✅ complete |
 | T5 — Pipeline wiring | `d8e2559` | ✅ complete |
 | T6 — Docs + packaging | `809ba45` | ✅ complete |
-| T7 — Audit remediation (docs) | *bundle commit = tip after landing T7 table row* | ✅ complete |
+| T7 — Audit remediation (docs) | `01f388e6c68449472ed250e23c2d850c2579a60d` | ✅ complete |
 
 ### Artifact chain
 
