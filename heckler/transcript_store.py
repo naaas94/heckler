@@ -9,9 +9,12 @@ schema version row in ``transcript_schema_version`` (not ``heckler_schema_versio
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -21,6 +24,26 @@ TRANSCRIPT_SCHEMA_VERSION: int = 1
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso_timestamp(value: str) -> datetime:
+    """Parse ISO-8601 timestamps from the DB (UTC ``Z`` normalized to an offset)."""
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _format_hhmmss(total_seconds: float) -> str:
+    if total_seconds < 0:
+        total_seconds = 0.0
+    whole = int(total_seconds)
+    h, rem = divmod(whole, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{sec:02d}"
 
 
 @dataclass
@@ -237,3 +260,65 @@ def get_chunks(conn: sqlite3.Connection, session_id: str) -> list[TranscriptChun
             )
         )
     return out
+
+
+def export_session_markdown(
+    conn: sqlite3.Connection, session_id: str, output_path: Path
+) -> None:
+    """Write the full transcript for ``session_id`` to ``output_path`` (atomic replace).
+
+    Reads current rows via :func:`get_session` / :func:`get_chunks` so callers may invoke
+    this repeatedly during an open session; each call overwrites the file with the
+    latest snapshot.
+    """
+    session = get_session(conn, session_id)
+    if session is None:
+        raise RuntimeError(f"transcript session not found: {session_id}")
+    chunks = get_chunks(conn, session_id)
+
+    started = _parse_iso_timestamp(session.started_at)
+    heading_date = started.date().isoformat()
+    lines: list[str] = [f"# {session.name} — {heading_date}", ""]
+
+    for i, chunk in enumerate(chunks):
+        chunk_started = _parse_iso_timestamp(chunk.timestamp_iso)
+        rel_s = (chunk_started - started).total_seconds()
+        stamp = _format_hhmmss(rel_s)
+        lines.append(f"[{stamp}] {chunk.chunk_text}")
+        if i < len(chunks) - 1:
+            lines.append("")
+
+    content = "\n".join(lines)
+    if content and not content.endswith("\n"):
+        content += "\n"
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_path: Optional[str] = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(output_path.parent),
+            prefix=".transcript_export_",
+            suffix=".tmp",
+        )
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        os.replace(tmp_path, output_path)
+        tmp_path = None
+        logger.info(
+            "transcript_store: session exported to markdown",
+            extra={"session_id": session_id},
+        )
+    except OSError:
+        logger.error(
+            "transcript_store: markdown export failed",
+            extra={"session_id": session_id},
+        )
+        raise
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
