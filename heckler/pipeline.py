@@ -12,16 +12,19 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import sounddevice as sd
+
+if TYPE_CHECKING:
+    from heckler.controller import ReactorHolder
 
 from heckler.audio_capture import AudioCapture, _put_drop_oldest
 from heckler.config import HecklerConfig, load_config
 from heckler.context_buffer import ContextBuffer
 from heckler.event_store import open_store
 from heckler.logger import HecklerLogger
-from heckler.models import DiscardReason, HeckleEvent, Utterance
+from heckler.models import DiscardReason, HeckleEvent, ReactorResult, Utterance
 from heckler.pacing_gate import PacingGate
 from heckler.persona import PersonaNotFoundError, apply_persona_overrides, load_persona
 from heckler.reactor import Reactor
@@ -61,6 +64,7 @@ def _run_transcription_worker(
     reaction_queue: queue.Queue,
     transcriber: Transcriber,
     heckler_logger: HecklerLogger,
+    on_transcript: Optional[Callable[[str], None]] = None,
 ) -> None:
     while True:
         try:
@@ -103,6 +107,11 @@ def _run_transcription_worker(
                 audio_chunk=chunk,
             )
             _put_drop_oldest(reaction_queue, utterance)
+            if on_transcript is not None:
+                try:
+                    on_transcript(text)
+                except Exception:
+                    logger.exception("on_transcript callback raised in transcription worker")
         except Exception:
             logger.exception("transcription worker dropped an item after unexpected error")
 
@@ -115,6 +124,7 @@ def _run_transcribe_worker(
     transcript_conn: sqlite3.Connection,
     session_id: str,
     transcript_lock: threading.Lock,
+    on_transcript: Optional[Callable[[str], None]] = None,
 ) -> None:
     sequence_num = 0
     while True:
@@ -142,7 +152,13 @@ def _run_transcribe_worker(
                     duration_s=duration_s,
                     sequence_num=sequence_num,
                 )
-            print(f"[TRANSCRIBE] {text}", flush=True)
+            if on_transcript is not None:
+                try:
+                    on_transcript(text)
+                except Exception:
+                    logger.exception("on_transcript callback raised in transcribe worker")
+            else:
+                print(f"[TRANSCRIBE] {text}", flush=True)
             logger.info(
                 "transcribe worker persisted chunk",
                 extra={"session_id": session_id, "chunk_sequence_num": sequence_num},
@@ -154,11 +170,12 @@ def _run_transcribe_worker(
 def _run_reaction_worker(
     *,
     context_buffer: ContextBuffer,
-    reactor: Reactor,
+    reactor_holder: ReactorHolder,
     pacing_gate: PacingGate,
     speaker: Speaker,
     heckler_logger: HecklerLogger,
     reaction_queue: queue.Queue,
+    on_reaction: Optional[Callable[[ReactorResult, bool], None]] = None,
 ) -> None:
     while True:
         try:
@@ -169,6 +186,7 @@ def _run_reaction_worker(
         if utterance is None:
             break
         try:
+            reactor = reactor_holder.get()
             context_block = context_buffer.get_context_block()
             result, llm_latency_ms, discard_reason = reactor.react(
                 utterance, context_block
@@ -226,6 +244,11 @@ def _run_reaction_worker(
                         tts_latency_ms=None,
                     )
                 )
+                if on_reaction is not None:
+                    try:
+                        on_reaction(result, False)
+                    except Exception:
+                        logger.exception("on_reaction callback raised (pacing gate)")
                 context_buffer.push(utterance.transcript)
                 continue
 
@@ -249,6 +272,11 @@ def _run_reaction_worker(
                         tts_latency_ms=None,
                     )
                 )
+                if on_reaction is not None:
+                    try:
+                        on_reaction(result, False)
+                    except Exception:
+                        logger.exception("on_reaction callback raised (TTS error)")
                 context_buffer.push(utterance.transcript)
                 continue
 
@@ -269,6 +297,11 @@ def _run_reaction_worker(
                     tts_latency_ms=tts_ms,
                 )
             )
+            if on_reaction is not None:
+                try:
+                    on_reaction(result, True)
+                except Exception:
+                    logger.exception("on_reaction callback raised (spoken)")
             context_buffer.push(utterance.transcript)
         except Exception:
             logger.exception("reaction worker dropped an utterance after unexpected error")
@@ -414,6 +447,9 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     reactor = Reactor(config, persona.system_prompt, persona.examples)
 
+    from heckler.controller import ReactorHolder  # local import avoids circular dependency
+    reactor_holder = ReactorHolder(reactor)
+
     context_buffer = ContextBuffer(config.context_window_size)
     pacing_gate = PacingGate(config)
 
@@ -438,7 +474,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         target=_run_reaction_worker,
         kwargs={
             "context_buffer": context_buffer,
-            "reactor": reactor,
+            "reactor_holder": reactor_holder,
             "pacing_gate": pacing_gate,
             "speaker": speaker,
             "heckler_logger": heckler_logger,

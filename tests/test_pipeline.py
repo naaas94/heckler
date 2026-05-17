@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from heckler.config import HecklerConfig
+from heckler.controller import ReactorHolder
 from heckler.models import AudioChunk, CommentType, DiscardReason, ReactorResult, Utterance
 from heckler.pacing_gate import PacingGate
 from heckler.persona import Persona, PersonaNotFoundError
@@ -238,7 +239,7 @@ def test_reaction_worker_falls_back_to_llm_error_when_react_returns_none_triple(
 
     _run_reaction_worker(
         context_buffer=context_buffer,
-        reactor=reactor,
+        reactor_holder=ReactorHolder(reactor),
         pacing_gate=MagicMock(),
         speaker=MagicMock(),
         heckler_logger=heckler_logger,
@@ -310,7 +311,7 @@ def test_reaction_worker_calls_reactor_react_directly():
 
     _run_reaction_worker(
         context_buffer=context_buffer,
-        reactor=reactor,
+        reactor_holder=ReactorHolder(reactor),
         pacing_gate=MagicMock(),
         speaker=MagicMock(),
         heckler_logger=heckler_logger,
@@ -341,7 +342,7 @@ def test_reaction_worker_maps_score_gate_discard_reason():
 
     _run_reaction_worker(
         context_buffer=context_buffer,
-        reactor=reactor,
+        reactor_holder=ReactorHolder(reactor),
         pacing_gate=MagicMock(),
         speaker=MagicMock(),
         heckler_logger=heckler_logger,
@@ -830,7 +831,7 @@ def test_reaction_worker_success_path_without_wrapper():
 
     _run_reaction_worker(
         context_buffer=context_buffer,
-        reactor=reactor,
+        reactor_holder=ReactorHolder(reactor),
         pacing_gate=pacing_gate,
         speaker=speaker,
         heckler_logger=heckler_logger,
@@ -870,7 +871,7 @@ def test_reaction_worker_pacing_gate_after_successful_react():
 
     _run_reaction_worker(
         context_buffer=context_buffer,
-        reactor=reactor,
+        reactor_holder=ReactorHolder(reactor),
         pacing_gate=pacing_gate,
         speaker=MagicMock(),
         heckler_logger=heckler_logger,

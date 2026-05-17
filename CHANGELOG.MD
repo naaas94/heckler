@@ -1,5 +1,11 @@
 # Changelog
 
+## gui-launcher — 2026-05-17
+
+Plan: PyQt6 GUI launcher replacing the blocking CLI `main()` loop with a Qt event loop, persona hot-swap, mode switching, and live transcript/reaction feeds. Full decomposition: `.dev/plans/gui-launcher/plan.md`.
+
+- T1 (PipelineController + hot-swap + callback infrastructure): Extracted pipeline lifecycle management from monolithic `main()` into a new `heckler/controller.py` module. Added `PipelineController` (start/stop/switch_mode/swap_persona), `ReactorHolder` (thread-safe Reactor hot-swap via `threading.Lock`), `ControllerCallbacks` dataclass, `PipelineNotRunningError`, and `PipelineAlreadyRunningError`. Modified `_run_reaction_worker` in `heckler/pipeline.py` to take `reactor_holder: ReactorHolder` (replacing `reactor: Reactor`) and optional `on_reaction` callback; added optional `on_transcript` callbacks to `_run_transcription_worker` and `_run_transcribe_worker` (CLI behavior preserved when callbacks are `None`). Updated `pipeline.main()` to use `ReactorHolder` via local import (avoids circular dependency). Updated `tests/test_pipeline.py` reaction-worker call sites to pass `reactor_holder`. Added `tests/test_controller.py` covering controller lifecycle, hot-swap, callback invocation, mode switch, error conditions, and adversarial callback-exception resilience. Rationale: Provides a reusable controller surface that T2 (GUI window) and T3 (packaging) can consume without coupling to `main()`'s blocking loop. Decision log: `.dev/decision-logs/gui-T1.md`.
+
 ## persona-system — 2026-05-16
 
 Plan: directory-per-persona bundles under `prompts/<name>/` with TOML manifest, swappable prompts and config overrides, wired later through pipeline and `HecklerConfig`. Full decomposition: `.dev/plans/persona-system/plan.md`.
