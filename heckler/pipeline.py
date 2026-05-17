@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import queue
+import sqlite3
 import threading
 import time
 import uuid
@@ -17,6 +19,7 @@ import sounddevice as sd
 from heckler.audio_capture import AudioCapture, _put_drop_oldest
 from heckler.config import HecklerConfig, load_config
 from heckler.context_buffer import ContextBuffer
+from heckler.event_store import open_store
 from heckler.logger import HecklerLogger
 from heckler.models import DiscardReason, HeckleEvent, Utterance
 from heckler.pacing_gate import PacingGate
@@ -24,6 +27,13 @@ from heckler.persona import PersonaNotFoundError, apply_persona_overrides, load_
 from heckler.reactor import Reactor
 from heckler.semantic_gate import passes_gate
 from heckler.speaker import Speaker, SpeakerError
+from heckler.transcript_store import (
+    close_session,
+    create_session,
+    export_session_markdown,
+    init_transcript_schema,
+    insert_chunk,
+)
 from heckler.transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
@@ -95,6 +105,50 @@ def _run_transcription_worker(
             _put_drop_oldest(reaction_queue, utterance)
         except Exception:
             logger.exception("transcription worker dropped an item after unexpected error")
+
+
+def _run_transcribe_worker(
+    *,
+    config: HecklerConfig,
+    audio_queue: queue.Queue,
+    transcriber: Transcriber,
+    transcript_conn: sqlite3.Connection,
+    session_id: str,
+    transcript_lock: threading.Lock,
+) -> None:
+    sequence_num = 0
+    while True:
+        try:
+            item = audio_queue.get()
+        except Exception:
+            logger.exception("audio_queue.get failed (transcribe worker)")
+            continue
+        if item is None:
+            break
+        try:
+            chunk = item
+            text = transcriber.transcribe(chunk).strip()
+            if not text:
+                continue
+            sequence_num += 1
+            duration_s = float(chunk.audio.shape[0]) / float(config.sample_rate)
+            timestamp_iso = _now_iso()
+            with transcript_lock:
+                insert_chunk(
+                    transcript_conn,
+                    session_id=session_id,
+                    chunk_text=text,
+                    timestamp_iso=timestamp_iso,
+                    duration_s=duration_s,
+                    sequence_num=sequence_num,
+                )
+            print(f"[TRANSCRIBE] {text}", flush=True)
+            logger.info(
+                "transcribe worker persisted chunk",
+                extra={"session_id": session_id, "chunk_sequence_num": sequence_num},
+            )
+        except Exception:
+            logger.exception("transcribe worker dropped an item after unexpected error")
 
 
 def _run_reaction_worker(
@@ -228,6 +282,17 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="List audio devices via sounddevice and exit",
     )
     parser.add_argument(
+        "--mode",
+        choices=["persona", "transcribe"],
+        default=None,
+        help="Pipeline mode: persona (full loop) or transcribe (capture + Whisper only)",
+    )
+    parser.add_argument(
+        "--session-name",
+        default=None,
+        help="Label for the transcription session (default: first 8 chars of session id)",
+    )
+    parser.add_argument(
         "--persona",
         type=str,
         default=None,
@@ -244,6 +309,80 @@ def main(argv: Optional[list[str]] = None) -> None:
     logging.basicConfig(level=logging.INFO)
 
     config = load_config()
+    mode = args.mode if args.mode is not None else config.mode
+
+    if mode == "transcribe":
+        t0 = time.perf_counter()
+        print(
+            f"[HECKLER] Loading transcription model ({config.whisper_model_size} / CUDA)...",
+            flush=True,
+        )
+        transcriber = Transcriber(config)
+        print(f"[HECKLER] Transcription ready. ({time.perf_counter() - t0:.1f}s)", flush=True)
+
+        transcript_conn = open_store(Path(config.sqlite_database_path))
+        init_transcript_schema(transcript_conn)
+        session_id = str(uuid.uuid4())
+        session_label = args.session_name or config.session_name or session_id[:8]
+        create_session(transcript_conn, session_id=session_id, name=session_label)
+        logger.info(
+            "transcribe session started",
+            extra={"session_id": session_id},
+        )
+
+        effective_config = dataclasses.replace(
+            config,
+            max_speech_duration_s=config.transcribe_max_speech_duration_s,
+            silence_duration_ms=config.transcribe_silence_duration_ms,
+            min_speech_duration_ms=config.transcribe_min_speech_duration_ms,
+        )
+
+        audio_queue: queue.Queue = queue.Queue(maxsize=config.queue_maxsize)
+        is_playing = threading.Event()
+        capture = AudioCapture(effective_config, audio_queue, is_playing)
+        transcript_lock = threading.Lock()
+
+        transcribe_thread = threading.Thread(
+            target=_run_transcribe_worker,
+            kwargs={
+                "config": config,
+                "audio_queue": audio_queue,
+                "transcriber": transcriber,
+                "transcript_conn": transcript_conn,
+                "session_id": session_id,
+                "transcript_lock": transcript_lock,
+            },
+            name="heckler-transcribe",
+            daemon=False,
+        )
+        transcribe_thread.start()
+
+        export_path = Path(config.transcripts_dir) / f"{session_label}.md"
+        try:
+            capture.start()
+            print("[HECKLER] Transcribe mode — mic open. Ctrl+C to stop.", flush=True)
+            try:
+                while True:
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                pass
+        finally:
+            capture.stop()
+            _put_shutdown_sentinel(audio_queue)
+            transcribe_thread.join(timeout=120.0)
+            close_session(transcript_conn, session_id)
+            try:
+                export_session_markdown(transcript_conn, session_id, export_path)
+            except (OSError, RuntimeError, sqlite3.Error):
+                logger.exception(
+                    "transcribe mode: markdown export failed",
+                    extra={"session_id": session_id},
+                )
+            print(
+                f"[HECKLER] Transcribe session ended (id={session_id}, markdown={export_path})",
+                flush=True,
+            )
+        return
 
     persona_name = args.persona or config.persona_name
     prompts_root = Path(__file__).resolve().parent.parent / "prompts"
@@ -278,7 +417,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     context_buffer = ContextBuffer(config.context_window_size)
     pacing_gate = PacingGate(config)
 
-    audio_queue: queue.Queue = queue.Queue(maxsize=config.queue_maxsize)
+    audio_queue = queue.Queue(maxsize=config.queue_maxsize)
     reaction_queue: queue.Queue = queue.Queue(maxsize=config.queue_maxsize)
 
     capture = AudioCapture(config, audio_queue, speaker.is_playing)

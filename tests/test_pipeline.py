@@ -1,5 +1,6 @@
 import logging
 import queue
+import sqlite3
 import threading as _threading
 from dataclasses import replace
 from pathlib import Path
@@ -16,8 +17,10 @@ from heckler.pipeline import (
     _execute_spoken_reply,
     _put_shutdown_sentinel,
     _run_reaction_worker,
+    _run_transcribe_worker,
     main,
 )
+from heckler.transcript_store import create_session, init_transcript_schema
 
 
 def _audio_utt(transcript: str) -> Utterance:
@@ -348,6 +351,221 @@ def test_reaction_worker_maps_score_gate_discard_reason():
     event = heckler_logger.log_event.call_args[0][0]
     assert event.discard_reason == DiscardReason.SCORE_GATE
     assert event.passed_score_gate is False
+
+
+def test_transcribe_worker_persists_chunks():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    init_transcript_schema(conn)
+    create_session(conn, session_id="sid-1", name="n")
+    q: queue.Queue = queue.Queue()
+    tr = MagicMock()
+    tr.transcribe.return_value = "  hello  "
+    cfg = HecklerConfig(anthropic_api_key="x", sample_rate=16_000)
+    chunk = AudioChunk(audio=np.zeros(16_000, dtype=np.float32), captured_at=0.0)
+    q.put(chunk)
+    q.put(None)
+    _run_transcribe_worker(
+        config=cfg,
+        audio_queue=q,
+        transcriber=tr,
+        transcript_conn=conn,
+        session_id="sid-1",
+        transcript_lock=_threading.Lock(),
+    )
+    rows = conn.execute(
+        "SELECT chunk_text, sequence_num, duration_s FROM transcript_chunks"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "hello"
+    assert rows[0][1] == 1
+    assert rows[0][2] == pytest.approx(1.0)
+
+
+def test_transcribe_worker_skips_empty_transcripts():
+    """Empty / whitespace-only transcripts must not consume a sequence number or insert rows."""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    init_transcript_schema(conn)
+    create_session(conn, session_id="sid-e", name="n")
+    q: queue.Queue = queue.Queue()
+    tr = MagicMock()
+    tr.transcribe.return_value = "   "
+    cfg = HecklerConfig(anthropic_api_key="x", sample_rate=16_000)
+    q.put(
+        AudioChunk(audio=np.zeros(100, dtype=np.float32), captured_at=0.0)
+    )
+    q.put(None)
+    _run_transcribe_worker(
+        config=cfg,
+        audio_queue=q,
+        transcriber=tr,
+        transcript_conn=conn,
+        session_id="sid-e",
+        transcript_lock=_threading.Lock(),
+    )
+    n = conn.execute("SELECT COUNT(*) FROM transcript_chunks").fetchone()[0]
+    assert n == 0
+
+
+def test_transcribe_worker_sentinel_shutdown():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    init_transcript_schema(conn)
+    create_session(conn, session_id="sid-2", name="n")
+    q: queue.Queue = queue.Queue()
+    q.put(None)
+    _run_transcribe_worker(
+        config=HecklerConfig(anthropic_api_key="x"),
+        audio_queue=q,
+        transcriber=MagicMock(),
+        transcript_conn=conn,
+        session_id="sid-2",
+        transcript_lock=_threading.Lock(),
+    )
+
+
+def test_main_transcribe_mode_does_not_load_speaker_or_reactor(tmp_path, monkeypatch):
+    db_path = tmp_path / "t.db"
+    cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+
+    def no_persona(*_a, **_k):
+        raise AssertionError("load_persona must not run in transcribe mode")
+
+    monkeypatch.setattr("heckler.pipeline.load_persona", no_persona)
+
+    def no_speaker(*_a, **_k):
+        raise AssertionError("Speaker must not load in transcribe mode")
+
+    def no_reactor(*_a, **_k):
+        raise AssertionError("Reactor must not load in transcribe mode")
+
+    def no_logger(*_a, **_k):
+        raise AssertionError("HecklerLogger must not load in transcribe mode")
+
+    def no_ctx(*_a, **_k):
+        raise AssertionError("ContextBuffer must not load in transcribe mode")
+
+    def no_pacing(*_a, **_k):
+        raise AssertionError("PacingGate must not load in transcribe mode")
+
+    monkeypatch.setattr("heckler.pipeline.Speaker", no_speaker)
+    monkeypatch.setattr("heckler.pipeline.Reactor", no_reactor)
+    monkeypatch.setattr("heckler.pipeline.HecklerLogger", no_logger)
+    monkeypatch.setattr("heckler.pipeline.ContextBuffer", no_ctx)
+    monkeypatch.setattr("heckler.pipeline.PacingGate", no_pacing)
+
+    mock_transcriber = MagicMock()
+    mock_transcriber.transcribe.return_value = ""
+    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda *_a, **_k: mock_transcriber)
+
+    mock_capture = MagicMock()
+    monkeypatch.setattr(
+        "heckler.pipeline.AudioCapture", lambda *_a, **_k: mock_capture
+    )
+
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    spawned: list[_threading.Thread] = []
+    _OrigThread = _threading.Thread
+
+    class _TrackingThread(_OrigThread):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            spawned.append(self)
+
+    monkeypatch.setattr("heckler.pipeline.threading.Thread", _TrackingThread)
+
+    main(["--mode", "transcribe"])
+
+    mock_capture.stop.assert_called_once()
+    assert len(spawned) == 1
+    assert spawned[0].name == "heckler-transcribe"
+    for t in spawned:
+        assert not t.is_alive()
+
+
+def test_main_transcribe_forwards_session_name_to_create_session(tmp_path, monkeypatch):
+    db_path = tmp_path / "t.db"
+    cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "heckler.pipeline.load_persona",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("persona path must not run in transcribe mode")
+        ),
+    )
+
+    seen: dict[str, str] = {}
+
+    def wrap_create(conn, *, session_id, name):
+        seen["name"] = name
+        from heckler.transcript_store import create_session as real_create
+
+        return real_create(conn, session_id=session_id, name=name)
+
+    monkeypatch.setattr("heckler.pipeline.create_session", wrap_create)
+
+    mock_transcriber = MagicMock()
+    mock_transcriber.transcribe.return_value = ""
+    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda *_a, **_k: mock_transcriber)
+    mock_capture = MagicMock()
+    monkeypatch.setattr(
+        "heckler.pipeline.AudioCapture", lambda *_a, **_k: mock_capture
+    )
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock)
+
+    main(["--mode", "transcribe", "--session-name", "town-hall"])
+
+    assert seen["name"] == "town-hall"
+
+
+def test_transcribe_mode_passes_vad_overrides_to_audio_capture(monkeypatch):
+    cfg = HecklerConfig(
+        anthropic_api_key="k",
+        max_speech_duration_s=9.0,
+        silence_duration_ms=111,
+        min_speech_duration_ms=222,
+        transcribe_max_speech_duration_s=40.0,
+        transcribe_silence_duration_ms=1600,
+        transcribe_min_speech_duration_ms=333,
+    )
+    captured: list[HecklerConfig] = []
+
+    def capture_audio(c: HecklerConfig, *_a, **_k):
+        captured.append(c)
+        return MagicMock()
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda *_a, **_k: MagicMock())
+    monkeypatch.setattr(
+        "heckler.pipeline.open_store", lambda *_a, **_k: sqlite3.connect(":memory:")
+    )
+    monkeypatch.setattr("heckler.pipeline.init_transcript_schema", lambda *_a, **_k: None)
+    monkeypatch.setattr("heckler.pipeline.create_session", lambda *_a, **_k: MagicMock())
+    monkeypatch.setattr("heckler.pipeline.close_session", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "heckler.pipeline.export_session_markdown", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr("heckler.pipeline.AudioCapture", capture_audio)
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock)
+
+    main(["--mode", "transcribe"])
+
+    assert len(captured) == 1
+    eff = captured[0]
+    assert eff.max_speech_duration_s == 40.0
+    assert eff.silence_duration_ms == 1600
+    assert eff.min_speech_duration_ms == 333
 
 
 def test_reaction_worker_success_path_without_wrapper():
