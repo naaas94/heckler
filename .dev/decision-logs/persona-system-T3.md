@@ -17,8 +17,13 @@
 
 ## Items deferred
 
-- **`tests/test_pipeline.py`** and **`heckler/pipeline.py`** still call **`Reactor(config)`** until **T5** — expected **`TypeError`** at runtime / failing pipeline tests until that subtask lands.
-- **`test_examples_json_types_are_comment_type_members`** path update remains **T6** (packet forbids T3 edit).
+*(Section superseded by **T7** audit remediation, 2026-05-16. Prior deferred items described **pre-T5** state; **T5**/**T6** have landed. See **Landed** below.)*
+
+## Landed (pipeline + tests — post-T5)
+
+- **`heckler/pipeline.py`** — persona branch loads **`load_persona(prompts_root / persona_name)`**, applies **`apply_persona_overrides`**, then constructs **`Reactor(config, persona.system_prompt, persona.examples)`** (three-arg constructor per §2).
+- **`tests/test_pipeline.py`** — integration and shutdown tests exercise the three-arg surface (including **`MagicMock`** monkeypatches using **`lambda *args, **kwargs:`** so **`Reactor`** receives **`config`**, **`system_prompt`**, and **`examples`**).
+- **`tests/test_reactor.py`** — **`test_examples_json_types_are_comment_type_members`** reads **`prompts/heckler/examples.json`** (**T6**).
 
 ## Files added
 
