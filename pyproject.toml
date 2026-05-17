@@ -32,3 +32,10 @@ heckler-gui = "heckler.gui.app:main"
 
 [tool.setuptools.packages.find]
 include = ["heckler*"]
+
+# Point Pyright / Pylance / basedpyright at the repo venv so third-party deps (e.g. PyQt6)
+# resolve when the interpreter is `.venv` (see `.vscode/settings.json`).
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"

@@ -55,7 +55,9 @@ def main() -> None:
     loader = ModelLoadThread(controller)
 
     def on_progress(msg: str) -> None:
-        window.statusBar().showMessage(msg)
+        status_bar = window.statusBar()
+        if status_bar is not None:
+            status_bar.showMessage(msg)
 
     def on_ready() -> None:
         window.set_models_ready(True)

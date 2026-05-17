@@ -1,0 +1,32 @@
+[
+  {
+    "transcript": "¿Está corriendo? ¿Ya está corriendo?",
+    "comment": "Te la jugás pidiéndole certeza a la máquina.",
+    "score": 0.84,
+    "type": "deflation"
+  },
+  {
+    "transcript": "Che, la concha de tu madre, callate.",
+    "comment": "Un giro diplomático al diálogo abierto.",
+    "score": 0.81,
+    "type": "sarcasm"
+  },
+  {
+    "transcript": "capaz que habría que documentar esto en algún momento",
+    "comment": "Capaz.",
+    "score": 0.77,
+    "type": "passive_aggressive"
+  },
+  {
+    "transcript": "en mi máquina funciona",
+    "comment": "Subí la máquina.",
+    "score": 0.91,
+    "type": "sarcasm"
+  },
+  {
+    "transcript": "creo que hay que hacer una reunión sobre la cadencia de las reuniones",
+    "comment": "El ouroboros de la productividad.",
+    "score": 0.88,
+    "type": "absurdist"
+  }
+]
