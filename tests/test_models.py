@@ -105,6 +105,7 @@ def test_heckler_config_defaults():
     assert cfg.anthropic_api_key == ""
     assert cfg.openai_api_key == ""
     assert cfg.ollama_api_base == ""
+    assert cfg.persona_name == "heckler"
 
 
 def test_load_config_without_llm_keys(monkeypatch, tmp_path):
@@ -114,12 +115,14 @@ def test_load_config_without_llm_keys(monkeypatch, tmp_path):
     monkeypatch.delenv("OLLAMA_API_BASE", raising=False)
     monkeypatch.delenv("HECKLER_LLM_MODEL", raising=False)
     monkeypatch.delenv("HECKLER_DATABASE_PATH", raising=False)
+    monkeypatch.delenv("HECKLER_PERSONA", raising=False)
     cfg = load_config()
     assert cfg.anthropic_api_key == ""
     assert cfg.openai_api_key == ""
     assert cfg.ollama_api_base == ""
     assert cfg.llm_model == "openai/gpt-4o-mini"
     assert cfg.sqlite_database_path == "logs/heckler.db"
+    assert cfg.persona_name == "heckler"
 
 
 def test_load_config_heckler_database_path_whitespace_falls_back_to_default(monkeypatch, tmp_path):
@@ -161,3 +164,39 @@ def test_load_config_heckler_llm_model_whitespace_falls_back_to_default(monkeypa
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     cfg = load_config()
     assert cfg.llm_model == "openai/gpt-4o-mini"
+
+
+def test_load_config_persona_name_default(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HECKLER_PERSONA", raising=False)
+    cfg = load_config()
+    assert cfg.persona_name == "heckler"
+
+
+def test_load_config_persona_name_override(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECKLER_PERSONA", "rapid-fire-qa")
+    cfg = load_config()
+    assert cfg.persona_name == "rapid-fire-qa"
+
+
+def test_load_config_persona_name_whitespace_falls_back_to_default(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECKLER_PERSONA", "   \t  ")
+    cfg = load_config()
+    assert cfg.persona_name == "heckler"
+
+
+def test_load_config_persona_name_empty_string_falls_back_to_default(monkeypatch, tmp_path):
+    # Falsifier: empty HECKLER_PERSONA must fall back like HECKLER_LLM_MODEL (or "" + strip).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECKLER_PERSONA", "")
+    cfg = load_config()
+    assert cfg.persona_name == "heckler"
+
+
+def test_load_config_persona_name_strips_surrounding_whitespace(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECKLER_PERSONA", "  custom-persona  ")
+    cfg = load_config()
+    assert cfg.persona_name == "custom-persona"

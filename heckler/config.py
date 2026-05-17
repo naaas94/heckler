@@ -34,6 +34,13 @@ class HecklerConfig:
     sqlite_database_path: str = "logs/heckler.db"
     log_density_failures: bool = False
     queue_maxsize: int = 10
+    persona_name: str = "heckler"
+    mode: str = "persona"
+    transcribe_max_speech_duration_s: float = 45.0
+    transcribe_silence_duration_ms: int = 1500
+    transcribe_min_speech_duration_ms: int = 250
+    transcripts_dir: str = "transcripts"
+    session_name: Optional[str] = None
 
 
 def load_config() -> HecklerConfig:
@@ -42,9 +49,21 @@ def load_config() -> HecklerConfig:
     llm_model = llm_env if llm_env else "openai/gpt-4o-mini"
     db_env = (os.getenv("HECKLER_DATABASE_PATH") or "").strip()
     sqlite_database_path = db_env if db_env else "logs/heckler.db"
+    persona_env = (os.getenv("HECKLER_PERSONA") or "").strip()
+    persona_name = persona_env if persona_env else "heckler"
+    mode_env = (os.getenv("HECKLER_MODE") or "").strip()
+    mode = mode_env if mode_env else "persona"
+    session_name_env = (os.getenv("HECKLER_SESSION_NAME") or "").strip()
+    session_name = session_name_env if session_name_env else None
+    transcripts_dir_env = (os.getenv("HECKLER_TRANSCRIPTS_DIR") or "").strip()
+    transcripts_dir = transcripts_dir_env if transcripts_dir_env else "transcripts"
     return HecklerConfig(
         llm_model=llm_model,
         sqlite_database_path=sqlite_database_path,
+        persona_name=persona_name,
+        mode=mode,
+        session_name=session_name,
+        transcripts_dir=transcripts_dir,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         ollama_api_base=os.getenv("OLLAMA_API_BASE", ""),
