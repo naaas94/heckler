@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import time
-from pathlib import Path
 from typing import Any, Optional
 
 from heckler.config import HecklerConfig
@@ -156,20 +155,19 @@ def _litellm_auth_params(config: HecklerConfig) -> dict[str, Any]:
 class Reactor:
     """LiteLLM-backed commentary generation with JSON parsing and score gating."""
 
-    def __init__(self, config: HecklerConfig) -> None:
+    def __init__(
+        self,
+        config: HecklerConfig,
+        system_prompt: str,
+        examples: list[dict[str, Any]],
+    ) -> None:
         """
-        Loads system prompt from prompts/system.md.
-        Loads examples from prompts/examples.json.
+        ``system_prompt`` and ``examples`` are caller-resolved persona content (no filesystem I/O).
         Pre-renders examples_block string (static, no per-call overhead).
         """
         self._config = config
-        root = Path(__file__).resolve().parent.parent
-        self._system_prompt = (root / "prompts" / "system.md").read_text(encoding="utf-8")
-        examples_path = root / "prompts" / "examples.json"
-        raw_examples: list[dict[str, Any]] = json.loads(
-            examples_path.read_text(encoding="utf-8")
-        )
-        self._examples_block = _format_examples_block(raw_examples)
+        self._system_prompt = system_prompt
+        self._examples_block = _format_examples_block(examples)
 
     def react(
         self,
@@ -292,8 +290,12 @@ class Reactor:
         try:
             ct = CommentType(type_val)
         except ValueError:
-            logger.warning("LLM JSON invalid CommentType %r: %r", type_val, raw)
-            return None
+            logger.warning(
+                "LLM JSON unrecognized CommentType %r, falling back to UNKNOWN: %r",
+                type_val,
+                raw,
+            )
+            ct = CommentType.UNKNOWN
 
         return ReactorResult(
             comment=comment,

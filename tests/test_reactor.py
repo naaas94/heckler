@@ -8,6 +8,11 @@ from heckler.config import HecklerConfig
 from heckler.models import AudioChunk, CommentType, DiscardReason, ReactorResult, Utterance
 from heckler.reactor import Reactor, completion_assistant_text
 
+_TEST_SYSTEM_PROMPT = "You are a test reactor."
+_TEST_EXAMPLES = [
+    {"transcript": "test", "comment": "test reply", "score": 0.8, "type": "observation"}
+]
+
 
 def _audio_utt(transcript: str) -> Utterance:
     chunk = AudioChunk(audio=np.zeros(8, dtype=np.float32), captured_at=0.0)
@@ -41,7 +46,7 @@ def test_valid_json_returns_reactor_result(monkeypatch, reactor_cfg: HecklerConf
     mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     utt = _audio_utt("hello there")
     result, latency, discard = r.react(utt, context_block="(none)")
     assert mock_completion.called
@@ -61,7 +66,7 @@ def test_leading_text_before_json_regex_fallback(monkeypatch, reactor_cfg: Heckl
     mock_completion = MagicMock(return_value=_litellm_completion_response(raw))
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     result, _, discard = r.react(_audio_utt("works on my machine"), "")
     assert discard is None
     assert result is not None
@@ -74,7 +79,7 @@ def test_invalid_json_returns_none(monkeypatch, reactor_cfg: HecklerConfig):
     )
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     result, latency, discard = r.react(_audio_utt("x"), "")
     assert result is None
     assert latency >= 0.0
@@ -87,7 +92,7 @@ def test_score_below_threshold_returns_none(monkeypatch):
     mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(cfg)
+    r = Reactor(cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     result, _, discard = r.react(_audio_utt("speech"), "")
     assert result is None
     assert discard == DiscardReason.SCORE_GATE
@@ -99,7 +104,7 @@ def test_score_at_exact_threshold_passes(monkeypatch):
     mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(cfg)
+    r = Reactor(cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     result, _, discard = r.react(_audio_utt("speech"), "")
     assert discard is None
     assert result is not None
@@ -110,7 +115,7 @@ def test_api_exception_returns_none_no_raise(monkeypatch, reactor_cfg: HecklerCo
     mock_completion = MagicMock(side_effect=ConnectionError("upstream"))
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     result, latency, discard = r.react(_audio_utt("y"), "")
     assert result is None
     assert latency >= 0.0
@@ -121,15 +126,48 @@ def test_examples_json_types_are_comment_type_members():
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    examples = json.loads((root / "prompts" / "examples.json").read_text(encoding="utf-8"))
+    examples = json.loads(
+        (root / "prompts" / "heckler" / "examples.json").read_text(encoding="utf-8")
+    )
+    assert examples, "prompts/heckler/examples.json must contain at least one example"
     for ex in examples:
         CommentType(ex["type"])  # raises if invalid
 
 
-def test_invalid_comment_type_in_json_returns_none():
+def test_invalid_comment_type_in_json_returns_unknown():
     raw = '{"comment": "x", "score": 0.9, "type": "not_a_real_type"}'
     r = Reactor.__new__(Reactor)
-    assert Reactor._parse_response(r, raw) is None
+    result = Reactor._parse_response(r, raw)
+    assert result is not None
+    assert result.comment_type == CommentType.UNKNOWN
+
+
+def test_react_unrecognized_type_string_returns_unknown_when_score_passes(monkeypatch):
+    """Falsifier: full ``react`` path must surface UNKNOWN (not None) for unrecognized ``type``."""
+    cfg = HecklerConfig(openai_api_key="k", score_threshold=0.65)
+    payload = '{"comment": "ok", "score": 0.9, "type": "not_a_real_type"}'
+    mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    r = Reactor(cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
+    result, _, discard = r.react(_audio_utt("hi"), "")
+    assert discard is None
+    assert result is not None
+    assert result.comment_type == CommentType.UNKNOWN
+    assert result.comment == "ok"
+
+
+def test_react_unrecognized_type_string_still_hits_score_gate(monkeypatch):
+    """UNKNOWN fallback must not bypass the score threshold."""
+    cfg = HecklerConfig(openai_api_key="k", score_threshold=0.65)
+    payload = '{"comment": "low", "score": 0.40, "type": "bogus_type_xyz"}'
+    mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
+    monkeypatch.setattr("litellm.completion", mock_completion)
+
+    r = Reactor(cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
+    result, _, discard = r.react(_audio_utt("x"), "")
+    assert result is None
+    assert discard == DiscardReason.SCORE_GATE
 
 
 def test_parse_response_regex_used_when_direct_json_fails():
@@ -181,7 +219,7 @@ def test_react_empty_choices_returns_llm_error(monkeypatch, reactor_cfg: Heckler
     resp.choices = []
     monkeypatch.setattr("litellm.completion", MagicMock(return_value=resp))
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     result, _, discard = r.react(_audio_utt("x"), "")
     assert result is None
     assert discard == DiscardReason.LLM_ERROR
@@ -191,7 +229,7 @@ def test_react_none_completion_response_returns_llm_error(monkeypatch, reactor_c
     """``litellm.completion`` returning ``None`` yields empty assistant text and LLM_ERROR (not raised)."""
     monkeypatch.setattr("litellm.completion", MagicMock(return_value=None))
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     result, _, discard = r.react(_audio_utt("x"), "")
     assert result is None
     assert discard == DiscardReason.LLM_ERROR
@@ -208,7 +246,7 @@ def test_correlation_set_from_completion_response_ids(monkeypatch, reactor_cfg: 
     mock_completion = MagicMock(return_value=resp)
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     r.react(_audio_utt("hello"), "")
     assert get_correlation() == {
         "completion_id": "chatcmpl-testid",
@@ -225,7 +263,7 @@ def test_litellm_completion_gets_metadata_when_hosted_observability_env(
     mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     r.react(_audio_utt("x"), "")
     kwargs = mock_completion.call_args.kwargs
     assert kwargs["metadata"]["generation_name"] == "heckler.react"
@@ -246,7 +284,7 @@ def test_litellm_completion_has_no_metadata_without_observability_env(
     mock_completion = MagicMock(return_value=_litellm_completion_response(payload))
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     r.react(_audio_utt("x"), "")
     kwargs = mock_completion.call_args.kwargs
     assert "metadata" not in kwargs
@@ -261,7 +299,7 @@ def test_magicmock_response_attrs_do_not_populate_correlation(monkeypatch, react
     mock_completion = MagicMock(return_value=resp)
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     r.react(_audio_utt("x"), "")
     assert get_correlation() is None
 
@@ -273,6 +311,6 @@ def test_llm_exception_resets_correlation_thread_local(monkeypatch, reactor_cfg:
     mock_completion = MagicMock(side_effect=ConnectionError("upstream"))
     monkeypatch.setattr("litellm.completion", mock_completion)
 
-    r = Reactor(reactor_cfg)
+    r = Reactor(reactor_cfg, _TEST_SYSTEM_PROMPT, _TEST_EXAMPLES)
     r.react(_audio_utt("x"), "")
     assert get_correlation() is None

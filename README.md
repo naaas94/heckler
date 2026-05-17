@@ -22,6 +22,8 @@ Target profile for v1: **Windows**, **NVIDIA RTX 3060 or better** (CUDA for Whis
 
    `pyproject.toml` pins **NumPy below 2.x** and **torch 2.5+** so Kokoro’s Transformers stack stays compatible with PyTorch’s attention helpers. If you mix indexes, install PyTorch first as in step 1, then this step from PyPI.
 
+   Persona prompt bundles (`prompts/<persona>/` with `persona.toml`, `system.md`, `examples.json`) live next to the `heckler` package in the repo. **`pip install -e .`** keeps that layout on disk so `python -m heckler` can resolve prompts. A non-editable **`pip install .`** without the checkout does not copy `prompts/` into site-packages; use an editable install from a clone for normal runs.
+
 3. **Environment file**
 
    Copy `.env.example` to `.env`. For the default `openai/gpt-4o-mini` model, set **`OPENAI_API_KEY`** (or configure credentials the way your OpenAI tooling expects). To use Anthropic, Ollama, or another LiteLLM backend, set **`HECKLER_LLM_MODEL`** to the appropriate LiteLLM model id and provide the matching key or base URL (see the table below). Uncomment optional overrides as needed.
@@ -33,6 +35,7 @@ Defined in `.env` / `.env.example` and read in `heckler/config.py` → `load_con
 | Variable | Purpose |
 |----------|---------|
 | `HECKLER_DATABASE_PATH` | SQLite database file path for persisted `HeckleEvent` rows (non-empty overrides default `logs/heckler.db`). Replaces the retired config field **`log_dir`** / daily JSONL files as the steady-state sink. |
+| `HECKLER_PERSONA` | Persona id for the prompt bundle under `prompts/<name>/` (non-empty after strip overrides default `heckler`; whitespace-only falls back to the default). |
 | `HECKLER_LLM_MODEL` | LiteLLM model id (non-empty overrides default `openai/gpt-4o-mini`). |
 | `OPENAI_API_KEY` | API key for OpenAI- and Azure-routed LiteLLM models (`openai/...`, `azure/...`); optional if the provider picks up credentials elsewhere. |
 | `ANTHROPIC_API_KEY` | API key for `anthropic/...` models; optional if unused or supplied via other means. |
@@ -65,6 +68,12 @@ List audio devices (uses `sounddevice.query_devices()`):
 
 ```bash
 python -m heckler --list-devices
+```
+
+Select a persona bundle (overrides `HECKLER_PERSONA` / default `heckler` for this process):
+
+```bash
+python -m heckler --persona heckler
 ```
 
 The `pyproject.toml` console script entry point `heckler` also resolves to `heckler.pipeline:main`.
