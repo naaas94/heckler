@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import time
 from typing import Any
@@ -167,6 +168,113 @@ def _build_controller_mocks(monkeypatch, cfg: HecklerConfig, callbacks: Controll
     }
 
 
+def test_load_models_transcribe_skips_speaker(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k")
+    callbacks = _make_callbacks()
+    mocks = _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models(mode="transcribe")
+
+    assert ctrl._transcriber is mocks["transcriber"]
+    assert ctrl._speaker is None
+
+
+def test_load_models_persona_loads_speaker(monkeypatch):
+    """Default ``load_models()`` loads Transcriber and Speaker (GUI / persona stack)."""
+    cfg = HecklerConfig(anthropic_api_key="k")
+    callbacks = _make_callbacks()
+    mocks = _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+
+    assert ctrl._transcriber is mocks["transcriber"]
+    assert ctrl._speaker is mocks["speaker"]
+
+
+def test_on_progress_includes_cuda_and_timing(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k")
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    messages: list[str] = []
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models(on_progress=messages.append)
+
+    assert any("/ CUDA" in m for m in messages)
+    assert any(re.search(r"\(\d+\.\d+s\)", m) for m in messages)
+    assert any("Kokoro /" in m for m in messages)
+
+
+def test_on_status_persona_mic_open(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k")
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+    ctrl.start(mode="persona")
+
+    status_texts = [c.args[0] for c in callbacks.on_status.call_args_list]
+    assert "Mic open. Listening." in status_texts
+    assert not any("Running in" in s for s in status_texts)
+
+
+def test_on_status_transcribe_mic_open(monkeypatch, tmp_path):
+    db_path = tmp_path / "t.db"
+    cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    monkeypatch.setattr(
+        "heckler.controller.open_store",
+        lambda _p: __import__("sqlite3").connect(":memory:", check_same_thread=False),
+    )
+    monkeypatch.setattr("heckler.controller.init_transcript_schema", lambda _c: None)
+    monkeypatch.setattr("heckler.controller.create_session", lambda *a, **kw: None)
+    monkeypatch.setattr("heckler.controller.close_session", lambda *a, **kw: None)
+    monkeypatch.setattr("heckler.controller.export_session_markdown", lambda *a, **kw: None)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models(mode="transcribe")
+    ctrl.start(mode="transcribe")
+
+    status_texts = [c.args[0] for c in callbacks.on_status.call_args_list]
+    assert any("Transcribe mode" in s and "mic open" in s.lower() for s in status_texts)
+    assert not any("Running in" in s for s in status_texts)
+
+
+def test_on_status_transcribe_session_ended_on_stop(monkeypatch, tmp_path):
+    """``stop()`` after transcribe mode emits session-ended status with id and markdown path."""
+    db_path = tmp_path / "t.db"
+    cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    monkeypatch.setattr(
+        "heckler.controller.open_store",
+        lambda _p: __import__("sqlite3").connect(":memory:", check_same_thread=False),
+    )
+    monkeypatch.setattr("heckler.controller.init_transcript_schema", lambda _c: None)
+    monkeypatch.setattr("heckler.controller.create_session", lambda *a, **kw: None)
+    monkeypatch.setattr("heckler.controller.close_session", lambda *a, **kw: None)
+    monkeypatch.setattr("heckler.controller.export_session_markdown", lambda *a, **kw: None)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models(mode="transcribe")
+    ctrl.start(mode="transcribe", session_name="my-session")
+    session_id = ctrl._transcript_session_id
+    assert session_id is not None
+    ctrl.stop()
+
+    status_texts = [c.args[0] for c in callbacks.on_status.call_args_list]
+    ended = [s for s in status_texts if "Transcribe session ended" in s]
+    assert len(ended) == 1
+    assert session_id in ended[0]
+    assert "markdown=" in ended[0]
+
+
 def test_controller_start_stop(monkeypatch):
     """PipelineController starts and stops cleanly; is_running reflects state."""
     cfg = HecklerConfig(anthropic_api_key="k")
@@ -226,7 +334,7 @@ def test_controller_on_status_called_on_start_and_stop(monkeypatch):
     ctrl.stop()
 
     status_calls = [call.args[0] for call in callbacks.on_status.call_args_list]
-    assert any("Running" in s or "persona" in s for s in status_calls)
+    assert any("Mic open" in s or "Listening" in s for s in status_calls)
     assert any("Stopping" in s for s in status_calls)
 
 

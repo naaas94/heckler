@@ -7,6 +7,7 @@ import logging
 import queue
 import sqlite3
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,20 +104,33 @@ class PipelineController:
     # Public API
     # ------------------------------------------------------------------
 
-    def load_models(self, on_progress: Optional[Callable[[str], None]] = None) -> None:
-        """Load Transcriber and Speaker once. Never call during mode switch or persona swap."""
+    def load_models(
+        self,
+        on_progress: Optional[Callable[[str], None]] = None,
+        *,
+        mode: Optional[str] = None,
+    ) -> None:
+        """Load Transcriber; load Speaker unless ``mode="transcribe"``.
+
+        Never call during mode switch or persona swap.
+        """
 
         def _prog(msg: str) -> None:
             if on_progress is not None:
                 on_progress(msg)
 
-        _prog(f"Loading transcription model ({self._config.whisper_model_size})...")
+        _prog(
+            f"Loading transcription model ({self._config.whisper_model_size} / CUDA)..."
+        )
+        t0 = time.perf_counter()
         self._transcriber = Transcriber(self._config)
-        _prog("Transcription model ready.")
+        _prog(f"Transcription ready. ({time.perf_counter() - t0:.1f}s)")
 
-        _prog(f"Loading TTS model ({self._config.kokoro_voice})...")
-        self._speaker = Speaker(self._config)
-        _prog("TTS model ready.")
+        if mode != "transcribe":
+            _prog(f"Loading TTS model (Kokoro / {self._config.kokoro_voice})...")
+            t1 = time.perf_counter()
+            self._speaker = Speaker(self._config)
+            _prog(f"TTS ready. ({time.perf_counter() - t1:.1f}s)")
 
     def start(
         self,
@@ -140,7 +154,12 @@ class PipelineController:
 
         self._running = True
         logger.info("PipelineController started in %r mode", mode)
-        self._callbacks.on_status(f"Running in {mode} mode.")
+        if mode == "persona":
+            self._callbacks.on_status("Mic open. Listening.")
+        elif mode == "transcribe":
+            self._callbacks.on_status(
+                "Transcribe mode — mic open. Ctrl+C to stop."
+            )
 
     def stop(self) -> None:
         if not self._running:
@@ -197,6 +216,10 @@ class PipelineController:
                     "transcribe mode: markdown export failed",
                     extra={"session_id": self._transcript_session_id},
                 )
+            self._callbacks.on_status(
+                "Transcribe session ended "
+                f"(id={self._transcript_session_id}, markdown={export_path})"
+            )
             self._transcript_conn = None
             self._transcript_session_id = None
             self._transcript_session_label = None
@@ -256,7 +279,10 @@ class PipelineController:
 
     def _start_persona_mode(self, *, persona_name: Optional[str] = None) -> None:
         assert self._transcriber is not None, "load_models() must be called before start()"
-        assert self._speaker is not None, "load_models() must be called before start()"
+        assert self._speaker is not None, (
+            "Speaker not loaded. Call load_models() without mode restriction "
+            "(default loads TTS), before starting persona mode."
+        )
 
         effective_persona_name = persona_name or self._config.persona_name
         prompts_root = Path(__file__).resolve().parent.parent / "prompts"
