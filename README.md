@@ -94,6 +94,27 @@ python scripts/import_legacy_jsonl.py [--database PATH] [--dry-run] [--skip-exis
 - `--dry-run`: parse and validate only; no writes.
 - `--skip-existing`: skip lines whose `(utterance_id, timestamp_iso)` pair already exists (uses JSON1 `json_extract` on `payload_json` when needed).
 
+## GUI
+
+Launch the graphical interface:
+
+```bash
+heckler-gui
+```
+
+The GUI provides:
+
+- **Mode toggle** — switch between persona and transcribe modes at runtime without restarting.
+- **Persona picker** — select and hot-swap persona bundles while the pipeline is running.
+- **Live feed** — real-time transcript of what is being said, plus AI reactions in persona mode.
+- **Session controls** — start/stop transcription sessions and export to markdown (transcribe mode).
+
+Model loading (Whisper + Kokoro TTS) happens once at startup with a progress indicator (~13 seconds on first launch with CUDA).
+
+PyQt6 is a core runtime dependency in `pyproject.toml`; installing the project with `pip install -e .` or `pip install -e ".[dev]"` (see [Setup](#setup)) pulls it in alongside the audio/ML stack—no separate GUI-only install step.
+
+The `heckler` CLI continues to work as before for headless / terminal-only usage.
+
 ## First run
 
 On the first launch you should expect **downloads**: Silero VAD weights via `torch.hub`, faster-whisper model files into the Hugging Face cache, and Kokoro assets when `Speaker` initializes. Subsequent starts reuse cached weights where possible.
