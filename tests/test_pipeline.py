@@ -1,13 +1,17 @@
 import logging
 import queue
 import threading as _threading
+from dataclasses import replace
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from heckler.config import HecklerConfig
 from heckler.models import AudioChunk, CommentType, DiscardReason, ReactorResult, Utterance
 from heckler.pacing_gate import PacingGate
+from heckler.persona import Persona, PersonaNotFoundError
 from heckler.pipeline import (
     _execute_spoken_reply,
     _put_shutdown_sentinel,
@@ -29,7 +33,18 @@ def _audio_utt(transcript: str) -> Utterance:
 
 def test_main_shutdown_stops_capture_and_joins_threads(monkeypatch):
     cfg = HecklerConfig(anthropic_api_key="test-key")
+    fake_persona = Persona(
+        name="heckler",
+        description="",
+        system_prompt="sys-prompt",
+        examples=[],
+        config_overrides={},
+    )
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.pipeline.load_persona", lambda _path: fake_persona)
+    monkeypatch.setattr(
+        "heckler.pipeline.apply_persona_overrides", lambda base, _persona: base
+    )
     monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
 
     mock_transcriber = MagicMock()
@@ -39,7 +54,7 @@ def test_main_shutdown_stops_capture_and_joins_threads(monkeypatch):
     mock_speaker = MagicMock()
     mock_speaker.is_playing = _threading.Event()
     monkeypatch.setattr("heckler.pipeline.Speaker", lambda _: mock_speaker)
-    monkeypatch.setattr("heckler.pipeline.Reactor", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.pipeline.Reactor", lambda *a, **kw: MagicMock())
 
     mock_capture = MagicMock()
     monkeypatch.setattr(
@@ -67,6 +82,138 @@ def test_main_shutdown_stops_capture_and_joins_threads(monkeypatch):
     assert len(spawned) == 2
     for t in spawned:
         assert not t.is_alive(), f"Thread {t.name} still alive after main() returned"
+
+
+def test_main_persona_flag_overrides_config(monkeypatch):
+    """``--persona`` CLI flag overrides ``config.persona_name`` for ``load_persona`` path."""
+    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler")
+    seen: list[Path] = []
+
+    def capture_load(persona_dir: Path) -> Persona:
+        seen.append(persona_dir)
+        return Persona(
+            name="custom",
+            description="",
+            system_prompt="s",
+            examples=[],
+            config_overrides={},
+        )
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.pipeline.load_persona", capture_load)
+    monkeypatch.setattr(
+        "heckler.pipeline.apply_persona_overrides", lambda base, _p: base
+    )
+    monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda _: MagicMock())
+    mock_speaker = MagicMock()
+    mock_speaker.is_playing = _threading.Event()
+    monkeypatch.setattr("heckler.pipeline.Speaker", lambda _: mock_speaker)
+    monkeypatch.setattr("heckler.pipeline.Reactor", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.pipeline.AudioCapture", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock())
+
+    main(["--persona", "stage-host"])
+
+    assert len(seen) == 1
+    assert seen[0].name == "stage-host"
+
+
+def test_main_persona_not_found_exits_nonzero(monkeypatch, capsys):
+    cfg = HecklerConfig(anthropic_api_key="test-key")
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "heckler.pipeline.load_persona",
+        lambda _path: (_ for _ in ()).throw(
+            PersonaNotFoundError("no such persona bundle")
+        ),
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main([])
+
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "[HECKLER] Error:" in captured.out
+    assert "no such persona bundle" in captured.out
+
+
+def test_main_passes_persona_prompts_to_reactor(monkeypatch):
+    """``Reactor`` receives resolved ``system_prompt`` and ``examples`` from the loaded persona."""
+    cfg = HecklerConfig(anthropic_api_key="test-key")
+    ex: list[dict] = [{"role": "user", "content": "x"}]
+    fake_persona = Persona(
+        name="heckler",
+        description="d",
+        system_prompt="resolved-system",
+        examples=ex,
+        config_overrides={},
+    )
+    reactor_cls = MagicMock(return_value=MagicMock())
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.pipeline.load_persona", lambda _p: fake_persona)
+    monkeypatch.setattr(
+        "heckler.pipeline.apply_persona_overrides", lambda base, _persona: base
+    )
+    monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda _: MagicMock())
+    mock_speaker = MagicMock()
+    mock_speaker.is_playing = _threading.Event()
+    monkeypatch.setattr("heckler.pipeline.Speaker", lambda _: mock_speaker)
+    monkeypatch.setattr("heckler.pipeline.Reactor", reactor_cls)
+    monkeypatch.setattr("heckler.pipeline.AudioCapture", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock())
+
+    main([])
+
+    reactor_cls.assert_called_once_with(cfg, "resolved-system", ex)
+
+
+def test_main_reactor_receives_post_override_config(monkeypatch):
+    """``Reactor`` is constructed with the ``HecklerConfig`` returned by ``apply_persona_overrides``."""
+    cfg = HecklerConfig(anthropic_api_key="test-key", llm_model="openai/gpt-4o-mini")
+    fake_persona = Persona(
+        name="heckler",
+        description="",
+        system_prompt="s",
+        examples=[],
+        config_overrides={},
+    )
+    merged = replace(cfg, llm_model="ollama/custom")
+    reactor_cls = MagicMock(return_value=MagicMock())
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.pipeline.load_persona", lambda _p: fake_persona)
+    monkeypatch.setattr(
+        "heckler.pipeline.apply_persona_overrides", lambda _b, _p: merged
+    )
+    monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda _: MagicMock())
+    mock_speaker = MagicMock()
+    mock_speaker.is_playing = _threading.Event()
+    monkeypatch.setattr("heckler.pipeline.Speaker", lambda _: mock_speaker)
+    monkeypatch.setattr("heckler.pipeline.Reactor", reactor_cls)
+    monkeypatch.setattr("heckler.pipeline.AudioCapture", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock())
+
+    main([])
+
+    assert reactor_cls.call_args is not None
+    passed_cfg = reactor_cls.call_args[0][0]
+    assert passed_cfg.llm_model == "ollama/custom"
 
 
 def test_reaction_worker_falls_back_to_llm_error_when_react_returns_none_triple(

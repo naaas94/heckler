@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import sounddevice as sd
@@ -19,6 +20,7 @@ from heckler.context_buffer import ContextBuffer
 from heckler.logger import HecklerLogger
 from heckler.models import DiscardReason, HeckleEvent, Utterance
 from heckler.pacing_gate import PacingGate
+from heckler.persona import PersonaNotFoundError, apply_persona_overrides, load_persona
 from heckler.reactor import Reactor
 from heckler.semantic_gate import passes_gate
 from heckler.speaker import Speaker, SpeakerError
@@ -225,6 +227,14 @@ def main(argv: Optional[list[str]] = None) -> None:
         action="store_true",
         help="List audio devices via sounddevice and exit",
     )
+    parser.add_argument(
+        "--persona",
+        type=str,
+        default=None,
+        help=(
+            "Persona name (maps to prompts/<name>/; default from HECKLER_PERSONA or 'heckler')"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.list_devices:
@@ -234,6 +244,17 @@ def main(argv: Optional[list[str]] = None) -> None:
     logging.basicConfig(level=logging.INFO)
 
     config = load_config()
+
+    persona_name = args.persona or config.persona_name
+    prompts_root = Path(__file__).resolve().parent.parent / "prompts"
+    try:
+        persona = load_persona(prompts_root / persona_name)
+    except PersonaNotFoundError as exc:
+        print(f"[HECKLER] Error: {exc}", flush=True)
+        raise SystemExit(1) from exc
+
+    config = apply_persona_overrides(config, persona)
+
     heckler_logger = HecklerLogger(config)
 
     t0 = time.perf_counter()
@@ -252,7 +273,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     speaker = Speaker(config)
     print(f"[HECKLER] TTS ready. ({time.perf_counter() - t1:.1f}s)", flush=True)
 
-    reactor = Reactor(config)
+    reactor = Reactor(config, persona.system_prompt, persona.examples)
 
     context_buffer = ContextBuffer(config.context_window_size)
     pacing_gate = PacingGate(config)
