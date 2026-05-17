@@ -45,24 +45,24 @@ def test_main_shutdown_stops_capture_and_joins_threads(monkeypatch):
         config_overrides={},
     )
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
-    monkeypatch.setattr("heckler.pipeline.load_persona", lambda _path: fake_persona)
+    monkeypatch.setattr("heckler.controller.load_persona", lambda _path: fake_persona)
     monkeypatch.setattr(
-        "heckler.pipeline.apply_persona_overrides", lambda base, _persona: base
+        "heckler.controller.apply_persona_overrides", lambda base, _persona: base
     )
-    monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
 
     mock_transcriber = MagicMock()
     mock_transcriber.transcribe.return_value = ""
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda _: mock_transcriber)
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda _: mock_transcriber)
 
     mock_speaker = MagicMock()
     mock_speaker.is_playing = _threading.Event()
-    monkeypatch.setattr("heckler.pipeline.Speaker", lambda _: mock_speaker)
-    monkeypatch.setattr("heckler.pipeline.Reactor", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.controller.Speaker", lambda _: mock_speaker)
+    monkeypatch.setattr("heckler.controller.Reactor", lambda *a, **kw: MagicMock())
 
     mock_capture = MagicMock()
     monkeypatch.setattr(
-        "heckler.pipeline.AudioCapture", lambda *a, **kw: mock_capture
+        "heckler.controller.AudioCapture", lambda *a, **kw: mock_capture
     )
 
     monkeypatch.setattr(
@@ -78,7 +78,7 @@ def test_main_shutdown_stops_capture_and_joins_threads(monkeypatch):
             super().__init__(*args, **kwargs)
             spawned.append(self)
 
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", _TrackingThread)
+    monkeypatch.setattr("heckler.controller.threading.Thread", _TrackingThread)
 
     main([])
 
@@ -104,22 +104,22 @@ def test_main_persona_flag_overrides_config(monkeypatch):
         )
 
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
-    monkeypatch.setattr("heckler.pipeline.load_persona", capture_load)
+    monkeypatch.setattr("heckler.controller.load_persona", capture_load)
     monkeypatch.setattr(
-        "heckler.pipeline.apply_persona_overrides", lambda base, _p: base
+        "heckler.controller.apply_persona_overrides", lambda base, _p: base
     )
-    monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda _: MagicMock())
     mock_speaker = MagicMock()
     mock_speaker.is_playing = _threading.Event()
-    monkeypatch.setattr("heckler.pipeline.Speaker", lambda _: mock_speaker)
-    monkeypatch.setattr("heckler.pipeline.Reactor", lambda *a, **kw: MagicMock())
-    monkeypatch.setattr("heckler.pipeline.AudioCapture", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.controller.Speaker", lambda _: mock_speaker)
+    monkeypatch.setattr("heckler.controller.Reactor", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.controller.AudioCapture", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock())
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock())
 
     main(["--persona", "stage-host"])
 
@@ -130,8 +130,13 @@ def test_main_persona_flag_overrides_config(monkeypatch):
 def test_main_persona_not_found_exits_nonzero(monkeypatch, capsys):
     cfg = HecklerConfig(anthropic_api_key="test-key")
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda *_a, **_k: MagicMock())
     monkeypatch.setattr(
-        "heckler.pipeline.load_persona",
+        "heckler.controller.Speaker",
+        lambda *_a, **_k: MagicMock(is_playing=_threading.Event()),
+    )
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
         lambda _path: (_ for _ in ()).throw(
             PersonaNotFoundError("no such persona bundle")
         ),
@@ -160,22 +165,22 @@ def test_main_passes_persona_prompts_to_reactor(monkeypatch):
     reactor_cls = MagicMock(return_value=MagicMock())
 
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
-    monkeypatch.setattr("heckler.pipeline.load_persona", lambda _p: fake_persona)
+    monkeypatch.setattr("heckler.controller.load_persona", lambda _p: fake_persona)
     monkeypatch.setattr(
-        "heckler.pipeline.apply_persona_overrides", lambda base, _persona: base
+        "heckler.controller.apply_persona_overrides", lambda base, _persona: base
     )
-    monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda _: MagicMock())
     mock_speaker = MagicMock()
     mock_speaker.is_playing = _threading.Event()
-    monkeypatch.setattr("heckler.pipeline.Speaker", lambda _: mock_speaker)
-    monkeypatch.setattr("heckler.pipeline.Reactor", reactor_cls)
-    monkeypatch.setattr("heckler.pipeline.AudioCapture", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.controller.Speaker", lambda _: mock_speaker)
+    monkeypatch.setattr("heckler.controller.Reactor", reactor_cls)
+    monkeypatch.setattr("heckler.controller.AudioCapture", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock())
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock())
 
     main([])
 
@@ -196,22 +201,22 @@ def test_main_reactor_receives_post_override_config(monkeypatch):
     reactor_cls = MagicMock(return_value=MagicMock())
 
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
-    monkeypatch.setattr("heckler.pipeline.load_persona", lambda _p: fake_persona)
+    monkeypatch.setattr("heckler.controller.load_persona", lambda _p: fake_persona)
     monkeypatch.setattr(
-        "heckler.pipeline.apply_persona_overrides", lambda _b, _p: merged
+        "heckler.controller.apply_persona_overrides", lambda _b, _p: merged
     )
-    monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda _: MagicMock())
     mock_speaker = MagicMock()
     mock_speaker.is_playing = _threading.Event()
-    monkeypatch.setattr("heckler.pipeline.Speaker", lambda _: mock_speaker)
-    monkeypatch.setattr("heckler.pipeline.Reactor", reactor_cls)
-    monkeypatch.setattr("heckler.pipeline.AudioCapture", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.controller.Speaker", lambda _: mock_speaker)
+    monkeypatch.setattr("heckler.controller.Reactor", reactor_cls)
+    monkeypatch.setattr("heckler.controller.AudioCapture", lambda *a, **kw: MagicMock())
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock())
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock())
 
     main([])
 
@@ -498,7 +503,7 @@ def test_main_transcribe_mode_does_not_load_speaker_or_reactor(tmp_path, monkeyp
     def no_persona(*_a, **_k):
         raise AssertionError("load_persona must not run in transcribe mode")
 
-    monkeypatch.setattr("heckler.pipeline.load_persona", no_persona)
+    monkeypatch.setattr("heckler.controller.load_persona", no_persona)
 
     def no_speaker(*_a, **_k):
         raise AssertionError("Speaker must not load in transcribe mode")
@@ -515,19 +520,19 @@ def test_main_transcribe_mode_does_not_load_speaker_or_reactor(tmp_path, monkeyp
     def no_pacing(*_a, **_k):
         raise AssertionError("PacingGate must not load in transcribe mode")
 
-    monkeypatch.setattr("heckler.pipeline.Speaker", no_speaker)
-    monkeypatch.setattr("heckler.pipeline.Reactor", no_reactor)
-    monkeypatch.setattr("heckler.pipeline.HecklerLogger", no_logger)
-    monkeypatch.setattr("heckler.pipeline.ContextBuffer", no_ctx)
-    monkeypatch.setattr("heckler.pipeline.PacingGate", no_pacing)
+    monkeypatch.setattr("heckler.controller.Speaker", no_speaker)
+    monkeypatch.setattr("heckler.controller.Reactor", no_reactor)
+    monkeypatch.setattr("heckler.controller.HecklerLogger", no_logger)
+    monkeypatch.setattr("heckler.controller.ContextBuffer", no_ctx)
+    monkeypatch.setattr("heckler.controller.PacingGate", no_pacing)
 
     mock_transcriber = MagicMock()
     mock_transcriber.transcribe.return_value = ""
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda *_a, **_k: mock_transcriber)
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda *_a, **_k: mock_transcriber)
 
     mock_capture = MagicMock()
     monkeypatch.setattr(
-        "heckler.pipeline.AudioCapture", lambda *_a, **_k: mock_capture
+        "heckler.controller.AudioCapture", lambda *_a, **_k: mock_capture
     )
 
     monkeypatch.setattr(
@@ -543,7 +548,7 @@ def test_main_transcribe_mode_does_not_load_speaker_or_reactor(tmp_path, monkeyp
             super().__init__(*args, **kwargs)
             spawned.append(self)
 
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", _TrackingThread)
+    monkeypatch.setattr("heckler.controller.threading.Thread", _TrackingThread)
 
     main(["--mode", "transcribe"])
 
@@ -559,7 +564,7 @@ def test_main_transcribe_forwards_session_name_to_create_session(tmp_path, monke
     cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
     monkeypatch.setattr(
-        "heckler.pipeline.load_persona",
+        "heckler.controller.load_persona",
         lambda *_a, **_k: (_ for _ in ()).throw(
             AssertionError("persona path must not run in transcribe mode")
         ),
@@ -573,20 +578,20 @@ def test_main_transcribe_forwards_session_name_to_create_session(tmp_path, monke
 
         return real_create(conn, session_id=session_id, name=name)
 
-    monkeypatch.setattr("heckler.pipeline.create_session", wrap_create)
+    monkeypatch.setattr("heckler.controller.create_session", wrap_create)
 
     mock_transcriber = MagicMock()
     mock_transcriber.transcribe.return_value = ""
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda *_a, **_k: mock_transcriber)
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda *_a, **_k: mock_transcriber)
     mock_capture = MagicMock()
     monkeypatch.setattr(
-        "heckler.pipeline.AudioCapture", lambda *_a, **_k: mock_capture
+        "heckler.controller.AudioCapture", lambda *_a, **_k: mock_capture
     )
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock)
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock)
 
     main(["--mode", "transcribe", "--session-name", "town-hall"])
 
@@ -610,22 +615,22 @@ def test_transcribe_mode_passes_vad_overrides_to_audio_capture(monkeypatch):
         return MagicMock()
 
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda *_a, **_k: MagicMock())
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda *_a, **_k: MagicMock())
     monkeypatch.setattr(
-        "heckler.pipeline.open_store", lambda *_a, **_k: sqlite3.connect(":memory:")
+        "heckler.controller.open_store", lambda *_a, **_k: sqlite3.connect(":memory:")
     )
-    monkeypatch.setattr("heckler.pipeline.init_transcript_schema", lambda *_a, **_k: None)
-    monkeypatch.setattr("heckler.pipeline.create_session", lambda *_a, **_k: MagicMock())
-    monkeypatch.setattr("heckler.pipeline.close_session", lambda *_a, **_k: None)
+    monkeypatch.setattr("heckler.controller.init_transcript_schema", lambda *_a, **_k: None)
+    monkeypatch.setattr("heckler.controller.create_session", lambda *_a, **_k: MagicMock())
+    monkeypatch.setattr("heckler.controller.close_session", lambda *_a, **_k: None)
     monkeypatch.setattr(
-        "heckler.pipeline.export_session_markdown", lambda *_a, **_k: None
+        "heckler.controller.export_session_markdown", lambda *_a, **_k: None
     )
-    monkeypatch.setattr("heckler.pipeline.AudioCapture", capture_audio)
+    monkeypatch.setattr("heckler.controller.AudioCapture", capture_audio)
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock)
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock)
 
     main(["--mode", "transcribe"])
 
@@ -641,7 +646,7 @@ def test_main_transcribe_calls_create_and_close_session(tmp_path, monkeypatch):
     cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
     monkeypatch.setattr(
-        "heckler.pipeline.load_persona",
+        "heckler.controller.load_persona",
         lambda *_a, **_k: (_ for _ in ()).throw(
             AssertionError("persona path must not run in transcribe mode")
         ),
@@ -658,24 +663,24 @@ def test_main_transcribe_calls_create_and_close_session(tmp_path, monkeypatch):
         closed.append(session_id)
         return close_session(conn, session_id)
 
-    monkeypatch.setattr("heckler.pipeline.create_session", wrap_create)
-    monkeypatch.setattr("heckler.pipeline.close_session", wrap_close)
+    monkeypatch.setattr("heckler.controller.create_session", wrap_create)
+    monkeypatch.setattr("heckler.controller.close_session", wrap_close)
     monkeypatch.setattr(
-        "heckler.pipeline.export_session_markdown", lambda *_a, **_k: None
+        "heckler.controller.export_session_markdown", lambda *_a, **_k: None
     )
 
     mock_transcriber = MagicMock()
     mock_transcriber.transcribe.return_value = ""
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda *_a, **_k: mock_transcriber)
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda *_a, **_k: mock_transcriber)
     mock_capture = MagicMock()
     monkeypatch.setattr(
-        "heckler.pipeline.AudioCapture", lambda *_a, **_k: mock_capture
+        "heckler.controller.AudioCapture", lambda *_a, **_k: mock_capture
     )
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock)
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock)
 
     main(["--mode", "transcribe"])
 
@@ -689,24 +694,24 @@ def test_main_transcribe_mode_instantiates_transcriber(tmp_path, monkeypatch):
     cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
     monkeypatch.setattr(
-        "heckler.pipeline.load_persona",
+        "heckler.controller.load_persona",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no persona in transcribe")),
     )
     transcriber_ctor = MagicMock(return_value=MagicMock(transcribe=MagicMock(return_value="")))
-    monkeypatch.setattr("heckler.pipeline.Transcriber", transcriber_ctor)
-    monkeypatch.setattr("heckler.pipeline.Speaker", MagicMock)
-    monkeypatch.setattr("heckler.pipeline.Reactor", MagicMock)
+    monkeypatch.setattr("heckler.controller.Transcriber", transcriber_ctor)
+    monkeypatch.setattr("heckler.controller.Speaker", MagicMock)
+    monkeypatch.setattr("heckler.controller.Reactor", MagicMock)
     monkeypatch.setattr(
-        "heckler.pipeline.export_session_markdown", lambda *_a, **_k: None
+        "heckler.controller.export_session_markdown", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
-        "heckler.pipeline.AudioCapture", lambda *_a, **_k: MagicMock()
+        "heckler.controller.AudioCapture", lambda *_a, **_k: MagicMock()
     )
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock)
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock)
 
     main(["--mode", "transcribe"])
 
@@ -725,24 +730,24 @@ def test_main_transcribe_respects_config_mode_when_cli_mode_omitted(
     )
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
     monkeypatch.setattr(
-        "heckler.pipeline.load_persona",
+        "heckler.controller.load_persona",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no persona")),
     )
     transcriber_ctor = MagicMock(return_value=MagicMock(transcribe=MagicMock(return_value="")))
-    monkeypatch.setattr("heckler.pipeline.Transcriber", transcriber_ctor)
-    monkeypatch.setattr("heckler.pipeline.Speaker", MagicMock)
-    monkeypatch.setattr("heckler.pipeline.Reactor", MagicMock)
+    monkeypatch.setattr("heckler.controller.Transcriber", transcriber_ctor)
+    monkeypatch.setattr("heckler.controller.Speaker", MagicMock)
+    monkeypatch.setattr("heckler.controller.Reactor", MagicMock)
     monkeypatch.setattr(
-        "heckler.pipeline.export_session_markdown", lambda *_a, **_k: None
+        "heckler.controller.export_session_markdown", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
-        "heckler.pipeline.AudioCapture", lambda *_a, **_k: MagicMock()
+        "heckler.controller.AudioCapture", lambda *_a, **_k: MagicMock()
     )
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock)
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock)
 
     main([])
 
@@ -765,22 +770,22 @@ def test_main_persona_mode_instantiates_speaker_and_reactor(argv, monkeypatch):
     reactor_ctor = MagicMock(return_value=MagicMock())
 
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
-    monkeypatch.setattr("heckler.pipeline.load_persona", lambda _path: fake_persona)
+    monkeypatch.setattr("heckler.controller.load_persona", lambda _path: fake_persona)
     monkeypatch.setattr(
-        "heckler.pipeline.apply_persona_overrides", lambda base, _persona: base
+        "heckler.controller.apply_persona_overrides", lambda base, _persona: base
     )
-    monkeypatch.setattr("heckler.pipeline.HecklerLogger", lambda _: MagicMock())
-    monkeypatch.setattr("heckler.pipeline.Transcriber", lambda *_a, **_k: MagicMock())
-    monkeypatch.setattr("heckler.pipeline.Speaker", speaker_ctor)
-    monkeypatch.setattr("heckler.pipeline.Reactor", reactor_ctor)
+    monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda *_a, **_k: MagicMock())
+    monkeypatch.setattr("heckler.controller.Speaker", speaker_ctor)
+    monkeypatch.setattr("heckler.controller.Reactor", reactor_ctor)
     monkeypatch.setattr(
-        "heckler.pipeline.AudioCapture", lambda *_a, **_k: MagicMock()
+        "heckler.controller.AudioCapture", lambda *_a, **_k: MagicMock()
     )
     monkeypatch.setattr(
         "heckler.pipeline.time.sleep",
         lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
     )
-    monkeypatch.setattr("heckler.pipeline.threading.Thread", MagicMock)
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock)
 
     main(argv)
 
@@ -802,6 +807,89 @@ def test_list_devices_with_mode_flag_short_circuits(monkeypatch):
     )
     main(["--list-devices", "--mode", "transcribe"])
     assert called["load"] == 0
+
+
+def test_main_cli_prints_legacy_persona_mic_banner(monkeypatch, capsys):
+    """Kill criterion: stdout contains the exact legacy mic-open banner."""
+    cfg = HecklerConfig(anthropic_api_key="test-key")
+    fake_persona = Persona(
+        name="heckler",
+        description="",
+        system_prompt="sys-prompt",
+        examples=[],
+        config_overrides={},
+    )
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.load_persona", lambda _path: fake_persona)
+    monkeypatch.setattr(
+        "heckler.controller.apply_persona_overrides", lambda base, _persona: base
+    )
+    monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr("heckler.controller.Transcriber", lambda *_a, **_k: MagicMock())
+    mock_speaker = MagicMock()
+    mock_speaker.is_playing = _threading.Event()
+    monkeypatch.setattr("heckler.controller.Speaker", lambda *_a, **_k: mock_speaker)
+    monkeypatch.setattr("heckler.controller.Reactor", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr(
+        "heckler.controller.AudioCapture", lambda *_a, **_k: MagicMock()
+    )
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock)
+
+    main([])
+
+    out = capsys.readouterr().out
+    assert "[HECKLER] Mic open. Listening." in out
+
+
+def test_main_cli_prints_legacy_transcribe_mic_banner(tmp_path, monkeypatch, capsys):
+    """Kill criterion: stdout contains the exact legacy transcribe mic-open banner."""
+    db_path = tmp_path / "t.db"
+    cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no persona")),
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber",
+        lambda *_a, **_k: MagicMock(transcribe=MagicMock(return_value="")),
+    )
+    monkeypatch.setattr(
+        "heckler.controller.AudioCapture", lambda *_a, **_k: MagicMock()
+    )
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    monkeypatch.setattr("heckler.controller.threading.Thread", MagicMock)
+
+    main(["--mode", "transcribe"])
+
+    out = capsys.readouterr().out
+    assert "[HECKLER] Transcribe mode — mic open. Ctrl+C to stop." in out
+
+
+def test_main_load_models_failure_exits_one(monkeypatch, capsys):
+    """Falsifier: load_models exception path prints the banner and exits 1."""
+    cfg = HecklerConfig(anthropic_api_key="test-key")
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("boom-models")
+
+    monkeypatch.setattr("heckler.controller.Transcriber", boom)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main([])
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "[HECKLER] Error loading models:" in out
+    assert "boom-models" in out
 
 
 def test_reaction_worker_success_path_without_wrapper():
