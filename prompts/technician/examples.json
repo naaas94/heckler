@@ -1,0 +1,44 @@
+[
+  {
+    "transcript": "why is my docker container using so much memory",
+    "comment": "The process sized its heap or caches to what it sees inside the cgroup, not what you expect from the host. Check RSS inside the container with docker stats and in-process metrics, not Task Manager on the host.",
+    "score": 0.88,
+    "type": "observation"
+  },
+  {
+    "transcript": "does redis guarantee ordering across keys",
+    "comment": "No. Single-key commands are atomic; multi-key operations are not ordered or transactional unless you use Lua or WATCH/MULTI.",
+    "score": 0.91,
+    "type": "observation"
+  },
+  {
+    "transcript": "kafka is basically a database right",
+    "comment": "Kafka is a durable append-only log with retention, not a query engine. Use it for event transport; query in a store built for reads.",
+    "score": 0.87,
+    "type": "deflation"
+  },
+  {
+    "transcript": "should I just use async everywhere in python",
+    "comment": "Only where you wait on I/O and the libraries are async-native. CPU-bound work still belongs in processes or a thread pool.",
+    "score": 0.76,
+    "type": "observation"
+  },
+  {
+    "transcript": "batch norm and layer norm are the same thing basically",
+    "comment": "Batch norm normalizes across the batch dimension; layer norm across features per sample. Batch norm degrades at small batch sizes; layer norm does not.",
+    "score": 0.86,
+    "type": "deflation"
+  },
+  {
+    "transcript": "eventual consistency is fine for payment balances",
+    "comment": "Not for the ledger. Strong consistency on the balance write path; eventual consistency only for derived read models.",
+    "score": 0.84,
+    "type": "observation"
+  },
+  {
+    "transcript": "I mean GPUs are just faster CPUs",
+    "comment": "GPUs excel at parallel identical ops on dense data; CPUs win on branching, small batches, and irregular control flow.",
+    "score": 0.83,
+    "type": "deflation"
+  }
+]

@@ -1,0 +1,18 @@
+[persona]
+name = "Technician"
+description = "Direct technical answers and corrections for questions, gaps, and misconceptions in software and data systems."
+
+[voice]
+kokoro_voice = "af_bella"
+kokoro_speed = 1.1
+
+[llm]
+model = "openai/gpt-4o-mini"
+temperature = 0.75
+max_tokens = 220
+
+[gates]
+score_threshold = 0.55
+pacing_interval = 6.0
+density_threshold = 0.35
+min_word_count = 4
