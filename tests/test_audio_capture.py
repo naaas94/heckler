@@ -5,9 +5,40 @@ import threading
 import numpy as np
 import pytest
 
-from heckler.audio_capture import VAD_FRAME_SAMPLES, _put_drop_oldest, AudioCapture
+from heckler.audio_capture import (
+    VAD_FRAME_SAMPLES,
+    _put_drop_oldest,
+    AudioCapture,
+    play_gate_frame_tick,
+)
 from heckler.config import HecklerConfig
 from heckler.models import AudioChunk
+
+
+def test_play_gate_frame_tick_clears_while_playing():
+    seg = [np.zeros(VAD_FRAME_SAMPLES, dtype=np.float32)]
+    result = play_gate_frame_tick(True, False, True, seg)
+    assert result.capturing is False
+    assert result.segment == []
+    assert result.was_gated is True
+    assert result.reset_vad is False
+
+
+def test_play_gate_frame_tick_reset_vad_on_clear_edge():
+    seg = [np.zeros(VAD_FRAME_SAMPLES, dtype=np.float32)]
+    result = play_gate_frame_tick(False, True, True, seg)
+    assert result.capturing is True
+    assert len(result.segment) == 1
+    assert result.was_gated is False
+    assert result.reset_vad is True
+
+
+def test_play_gate_frame_tick_passthrough_when_open():
+    result = play_gate_frame_tick(False, False, False, [])
+    assert result.capturing is False
+    assert result.segment == []
+    assert result.was_gated is False
+    assert result.reset_vad is False
 
 
 def test_put_drop_oldest_removes_oldest_on_overflow():

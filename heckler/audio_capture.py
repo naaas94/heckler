@@ -4,6 +4,7 @@ import queue
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -15,6 +16,43 @@ from heckler.models import AudioChunk
 
 # Silero VAD at 16 kHz expects fixed 512-sample frames (see snakers4/silero-vad).
 VAD_FRAME_SAMPLES = 512
+
+
+@dataclass(frozen=True)
+class PlayGateFrameResult:
+    capturing: bool
+    segment: list[np.ndarray]
+    was_gated: bool
+    reset_vad: bool
+
+
+def play_gate_frame_tick(
+    is_playing: bool,
+    was_gated: bool,
+    capturing: bool,
+    segment: list[np.ndarray],
+) -> PlayGateFrameResult:
+    """Advance capture play-gate state for one VAD frame (pure; no Silero)."""
+    if is_playing:
+        return PlayGateFrameResult(
+            capturing=False,
+            segment=[],
+            was_gated=True,
+            reset_vad=False,
+        )
+    if was_gated:
+        return PlayGateFrameResult(
+            capturing=capturing,
+            segment=segment,
+            was_gated=False,
+            reset_vad=True,
+        )
+    return PlayGateFrameResult(
+        capturing=capturing,
+        segment=segment,
+        was_gated=False,
+        reset_vad=False,
+    )
 
 
 def _put_drop_oldest(q: queue.Queue, item: Any) -> None:
@@ -50,6 +88,7 @@ class AudioCapture:
         self._pcm: deque[np.ndarray] = deque(maxlen=256)
 
         self._callback: Callable[..., None] = self._vad_callback
+        self._play_gate_was_gated = False
 
     def start(self) -> None:
         """Starts capture in a background thread. Non-blocking."""
@@ -153,11 +192,31 @@ class AudioCapture:
                 for frame in frames:
                     if frame.shape[0] != VAD_FRAME_SAMPLES:
                         continue
+
+                    tick = play_gate_frame_tick(
+                        self._is_playing.is_set(),
+                        self._play_gate_was_gated,
+                        capturing,
+                        segment,
+                    )
+                    self._play_gate_was_gated = tick.was_gated
+                    capturing = tick.capturing
+                    segment = tick.segment
+                    if self._is_playing.is_set():
+                        continue
+                    if tick.reset_vad:
+                        vad_iter = new_vad_iterator()
+
                     tensor = torch.from_numpy(frame)
 
                     if capturing:
                         pending = sum(f.shape[0] for f in segment) + int(frame.shape[0])
                         if pending >= max_speech_samples:
+                            if self._is_playing.is_set():
+                                capturing = False
+                                segment = []
+                                vad_iter = new_vad_iterator()
+                                continue
                             audio = np.concatenate(segment + [frame.copy()], dtype=np.float32)
                             self._emit_audio_segment(audio, min_speech_samples)
                             capturing = False
