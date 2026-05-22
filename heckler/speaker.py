@@ -44,9 +44,11 @@ class Speaker:
         2. Synthesize: generator = self._pipeline(comment, voice=config.kokoro_voice, speed=config.kokoro_speed)
         3. Collect all audio chunks into single np array
         4. sounddevice.play(audio, samplerate=24000, blocking=True)
-        5. self.is_playing.clear()  ← ungate mic after playback ends
+        5. Optional post-playback tail sleep (`tts_gate_tail_ms`) while gate stays set
+        6. self.is_playing.clear()  ← ungate mic after playback and acoustic tail
 
         On synthesis error: clear is_playing, log, re-raise as SpeakerError.
+        On play failure: clear without tail sleep.
         """
         self.is_playing.set()
         t0 = time.perf_counter()
@@ -66,6 +68,9 @@ class Speaker:
 
         try:
             sd.play(audio, samplerate=24000, blocking=True)
+            tail_ms = self._config.tts_gate_tail_ms
+            if tail_ms > 0:
+                time.sleep(tail_ms / 1000.0)
         finally:
             self.is_playing.clear()
 

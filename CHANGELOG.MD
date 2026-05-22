@@ -6,6 +6,8 @@ Plan: post-playback acoustic tail on `Speaker.is_playing` before mic capture res
 
 - T1 (Config surface for mic-gate tail): Added **`HecklerConfig.tts_gate_tail_ms`** (default **400**) and **`load_config()`** parsing of **`TTS_GATE_TAIL_MS`** via bare **`int(os.getenv(...))`** (no strip). **`+`** **`tests/test_config.py`** default, env override, and **`0`** disable falsifiers. **Rationale:** Typed config must exist before **T2** reads **`self._config.tts_gate_tail_ms`** in **`Speaker.speak`** instead of hardcoding milliseconds.
 
+- T2 (Speaker post-playback mic-gate tail): After successful **`sd.play`**, **`Speaker.speak`** sleeps **`tts_gate_tail_ms`** while **`is_playing`** stays set, then clears in **`finally`**; synthesis and play errors clear without tail. **`+`** **`tests/test_speaker.py`** tail-hold, zero-tail, error-path, and latency-excludes-tail falsifiers; default test fixture uses **`tts_gate_tail_ms=0`**. **Rationale:** Digital playback end precedes acoustic bleed; extending the shared gate suppresses echo transcripts without changing capture or pacing order. Decision log: **`.dev/decision-logs/tts-mic-gate-tail-T2.md`**.
+
 ## gui-launcher — 2026-05-17
 
 Plan: PyQt6 GUI launcher replacing the blocking CLI `main()` loop with a Qt event loop, persona hot-swap, mode switching, and live transcript/reaction feeds. Full decomposition: `.dev/plans/gui-launcher/plan.md`.

@@ -1,3 +1,4 @@
+import dataclasses
 import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -14,7 +15,7 @@ from heckler.speaker import Speaker, SpeakerError
 
 @pytest.fixture
 def config() -> HecklerConfig:
-    return HecklerConfig()
+    return dataclasses.replace(HecklerConfig(), tts_gate_tail_ms=0)
 
 
 def _speaker_with_mock_pipeline(monkeypatch, config: HecklerConfig):
@@ -91,6 +92,7 @@ def test_speak_passes_voice_speed_and_plays_at_24k(monkeypatch, config):
 
 
 def test_speak_clears_event_after_successful_playback(monkeypatch, config):
+    assert config.tts_gate_tail_ms == 0
     speaker, pipeline_inst, _ = _speaker_with_mock_pipeline(monkeypatch, config)
     monkeypatch.setattr(speaker_mod.sd, "play", MagicMock())
     pipeline_inst.side_effect = lambda *a, **k: iter(
@@ -195,3 +197,104 @@ def test_speak_concatenates_multiple_kokoro_chunks(monkeypatch, config):
     assert played.shape == (3,)
     assert played.dtype == np.float32
     np.testing.assert_array_equal(played, np.array([1.0, 2.0, 3.0], dtype=np.float32))
+
+
+def test_speak_holds_mic_gate_during_post_playback_tail(monkeypatch):
+    config = dataclasses.replace(HecklerConfig(), tts_gate_tail_ms=400)
+    speaker, pipeline_inst, _ = _speaker_with_mock_pipeline(monkeypatch, config)
+    monkeypatch.setattr(speaker_mod.sd, "play", MagicMock())
+    pipeline_inst.side_effect = lambda *a, **k: iter(
+        [("g", "p", np.array([0.01], dtype=np.float32))]
+    )
+    gate_during_tail: list[bool] = []
+    sleep_seconds: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleep_seconds.append(seconds)
+        gate_during_tail.append(speaker.is_playing.is_set())
+
+    monkeypatch.setattr(speaker_mod.time, "sleep", fake_sleep)
+
+    speaker.speak("ok")
+
+    assert gate_during_tail == [True]
+    assert sleep_seconds == [0.4]
+    assert not speaker.is_playing.is_set()
+
+
+def test_speak_zero_tail_skips_post_playback_sleep(monkeypatch, config):
+    assert config.tts_gate_tail_ms == 0
+    speaker, pipeline_inst, _ = _speaker_with_mock_pipeline(monkeypatch, config)
+    monkeypatch.setattr(speaker_mod.sd, "play", MagicMock())
+    pipeline_inst.side_effect = lambda *a, **k: iter(
+        [("g", "p", np.array([0.01], dtype=np.float32))]
+    )
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        speaker_mod.time, "sleep", lambda s: sleep_calls.append(s)
+    )
+
+    speaker.speak("ok")
+
+    assert sleep_calls == []
+
+
+def test_play_failure_skips_post_playback_tail_sleep(monkeypatch, config):
+    speaker, pipeline_inst, _ = _speaker_with_mock_pipeline(monkeypatch, config)
+    mock_play = MagicMock()
+    mock_play.side_effect = OSError("device")
+    monkeypatch.setattr(speaker_mod.sd, "play", mock_play)
+    pipeline_inst.side_effect = lambda *a, **k: iter(
+        [("g", "p", np.array([0.01], dtype=np.float32))]
+    )
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        speaker_mod.time, "sleep", lambda s: sleep_calls.append(s)
+    )
+
+    with pytest.raises(OSError, match="device"):
+        speaker.speak("x")
+
+    assert sleep_calls == []
+
+
+def test_synthesis_failure_skips_post_playback_tail_sleep(monkeypatch, config):
+    speaker, pipeline_inst, _ = _speaker_with_mock_pipeline(monkeypatch, config)
+    monkeypatch.setattr(speaker_mod.sd, "play", MagicMock())
+    pipeline_inst.side_effect = RuntimeError("synth failed")
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        speaker_mod.time, "sleep", lambda s: sleep_calls.append(s)
+    )
+
+    with pytest.raises(SpeakerError, match="TTS synthesis failed"):
+        speaker.speak("x")
+
+    assert sleep_calls == []
+
+
+def test_speak_tts_latency_excludes_post_playback_tail(monkeypatch):
+    config = dataclasses.replace(HecklerConfig(), tts_gate_tail_ms=500)
+    speaker, pipeline_inst, _ = _speaker_with_mock_pipeline(monkeypatch, config)
+    monkeypatch.setattr(speaker_mod.sd, "play", MagicMock())
+    pipeline_inst.side_effect = lambda *a, **k: iter(
+        [("g", "p", np.array([0.01], dtype=np.float32))]
+    )
+    perf_samples = [10.0, 10.05, 99.0]
+    perf_calls: list[float] = []
+
+    def fake_perf() -> float:
+        perf_calls.append(1.0)
+        return perf_samples[len(perf_calls) - 1]
+
+    monkeypatch.setattr(speaker_mod.time, "perf_counter", fake_perf)
+    tail_slept: list[float] = []
+    monkeypatch.setattr(
+        speaker_mod.time, "sleep", lambda s: tail_slept.append(s)
+    )
+
+    latency_ms = speaker.speak("ok")
+
+    assert latency_ms == pytest.approx(50.0)
+    assert len(perf_calls) == 2
+    assert tail_slept == [0.5]
