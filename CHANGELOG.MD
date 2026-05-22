@@ -1,5 +1,11 @@
 # Changelog
 
+## persona-speech-reload — 2026-05-22
+
+Plan: reload Whisper/Kokoro when persona or locale override changes `(whisper_language, kokoro_lang_code)` signature; GUI locale combo and unified apply path; CLI parity. Binding spec: `PERSONA_SPEECH_RELOAD.md`. Full decomposition: `.dev/plans/persona-speech-reload/plan.md`.
+
+- T1 (Speech stack signature and locale labels): Added **`speech_stack_signature`** and **`supported_locale_labels`** to **`heckler/locale.py`**; extended **`tests/test_locale.py`** with en/es/en-gb signature tests, supported-labels ordering, and stale-field falsifier; **`git add`** **`PERSONA_SPEECH_RELOAD.md`** as binding spec. **Rationale:** T2+ need a pure `(whisper_language, kokoro_lang_code)` tuple for reload comparison without re-resolving from **`cfg.locale`**. **Deferred (adversarial §2.1):** no test that importing **`heckler.locale`** at runtime does not pull **`HecklerConfig`** — **`TYPE_CHECKING`** guard only; circular-import kill criterion mitigated by design, not exercised by pytest.
+
 ## locale-lang-propagation — 2026-05-22
 
 Plan: unified `HecklerConfig.locale` propagates to Whisper `whisper_language` and Kokoro `kokoro_lang_code` via `heckler/locale.py`; operator entry `HECKLER_LOCALE` and persona `[voice].locale` (later subtasks). Full decomposition: `.dev/plans/locale-lang-propagation/plan.md`.

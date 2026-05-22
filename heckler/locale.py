@@ -1,4 +1,9 @@
-from typing import NamedTuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, NamedTuple
+
+if TYPE_CHECKING:
+    from heckler.config import HecklerConfig
 
 
 class UnsupportedLocaleError(ValueError):
@@ -31,3 +36,16 @@ def resolve_locale(locale: str) -> LocaleProfile:
         return SUPPORTED_LOCALES[key]
     except KeyError as exc:
         raise UnsupportedLocaleError(f"unsupported locale: {key!r}") from exc
+
+
+def speech_stack_signature(cfg: HecklerConfig) -> tuple[str, str]:
+    """Return the (whisper_language, kokoro_lang_code) identity tuple for reload comparison.
+
+    cfg must already have resolved locale fields (call apply_resolved_locale first).
+    """
+    return (cfg.whisper_language, cfg.kokoro_lang_code)
+
+
+def supported_locale_labels() -> list[str]:
+    """Return the ordered list of supported locale slugs for GUI population."""
+    return list(SUPPORTED_LOCALES.keys())
