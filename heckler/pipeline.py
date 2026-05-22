@@ -371,10 +371,12 @@ def main(argv: Optional[list[str]] = None) -> None:
     controller = PipelineController(config, callbacks)
 
     try:
-        controller.load_models(
+        # ensure_heavy_models loads when signature differs; same locale + voice-only change is a no-op.
+        controller.ensure_heavy_models(
+            persona_name=persona_name if mode == "persona" else None,
+            locale_override=None,  # No CLI locale override in v1
             on_progress=lambda msg: print(f"[HECKLER] {msg}", flush=True),
             mode=mode,
-            persona_name=persona_name if mode == "persona" else None,
         )
     except Exception as exc:
         print(f"[HECKLER] Error loading models: {exc}", flush=True)

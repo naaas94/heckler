@@ -96,18 +96,19 @@ def test_main_shutdown_stops_capture_and_joins_threads(monkeypatch):
         assert not t.is_alive(), f"Thread {t.name} still alive after main() returned"
 
 
-def test_main_load_models_persona_name_on_persona_mode(monkeypatch):
-    """Persona-mode ``main()`` passes the same ``persona_name`` to ``load_models`` as ``start()`` (A4)."""
+def test_main_ensure_heavy_models_persona_name_on_persona_mode(monkeypatch):
+    """Persona-mode ``main()`` passes the same ``persona_name`` to ``ensure_heavy_models`` as ``start()``."""
     cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler", locale="en")
-    load_calls: list[dict] = []
+    ensure_calls: list[dict] = []
     start_calls: list[dict] = []
 
     class _RecordingController:
         def __init__(self, _config, _callbacks):
             pass
 
-        def load_models(self, **kwargs):
-            load_calls.append(kwargs)
+        def ensure_heavy_models(self, **kwargs):
+            ensure_calls.append(kwargs)
+            return True
 
         def start(self, mode, *, persona_name=None, session_name=None):
             start_calls.append(
@@ -126,23 +127,158 @@ def test_main_load_models_persona_name_on_persona_mode(monkeypatch):
 
     main(["--persona", "stage-host"])
 
-    assert len(load_calls) == 1
-    assert load_calls[0]["mode"] == "persona"
-    assert load_calls[0]["persona_name"] == "stage-host"
+    assert len(ensure_calls) == 1
+    assert ensure_calls[0]["mode"] == "persona"
+    assert ensure_calls[0]["persona_name"] == "stage-host"
+    assert ensure_calls[0]["locale_override"] is None
     assert len(start_calls) == 1
     assert start_calls[0]["persona_name"] == "stage-host"
 
 
-def test_main_load_models_uses_config_persona_when_cli_omitted(monkeypatch):
-    """Default persona-mode ``main([])`` forwards ``config.persona_name`` into ``load_models``."""
+def test_main_ensure_heavy_models_uses_config_persona_when_cli_omitted(monkeypatch):
+    """Default persona-mode ``main([])`` forwards ``config.persona_name`` into ``ensure_heavy_models``."""
     cfg = HecklerConfig(
         anthropic_api_key="test-key", persona_name="default-host", locale="en"
     )
+    ensure_calls: list[dict] = []
+
+    class _RecordingController:
+        def __init__(self, _config, _callbacks):
+            pass
+
+        def ensure_heavy_models(self, **kwargs):
+            ensure_calls.append(kwargs)
+            return True
+
+        def start(self, *_a, **_k):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.PipelineController", _RecordingController)
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    main([])
+
+    assert ensure_calls[0]["persona_name"] == "default-host"
+
+
+def test_main_transcribe_ensure_heavy_models_omits_persona_name(monkeypatch):
+    """Transcribe-mode ``main()`` must not pass ``persona_name`` into ``ensure_heavy_models``."""
+    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler")
+    ensure_calls: list[dict] = []
+
+    class _RecordingController:
+        def __init__(self, _config, _callbacks):
+            pass
+
+        def ensure_heavy_models(self, **kwargs):
+            ensure_calls.append(kwargs)
+            return True
+
+        def start(self, *_a, **_k):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.PipelineController", _RecordingController)
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    main(["--mode", "transcribe"])
+
+    assert len(ensure_calls) == 1
+    assert ensure_calls[0]["mode"] == "transcribe"
+    assert ensure_calls[0].get("persona_name") is None
+
+
+def test_cli_persona_heckler_arg_calls_ensure_heavy_models(monkeypatch):
+    """``--persona heckler_arg`` routes locale-aware load through ``ensure_heavy_models``."""
+    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler", locale="en")
+    ensure_calls: list[dict] = []
+
+    class _RecordingController:
+        def __init__(self, _config, _callbacks):
+            pass
+
+        def ensure_heavy_models(self, **kwargs):
+            ensure_calls.append(kwargs)
+            return True
+
+        def start(self, *_a, **_k):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.PipelineController", _RecordingController)
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    main(["--persona", "heckler_arg"])
+
+    assert len(ensure_calls) == 1
+    assert ensure_calls[0]["persona_name"] == "heckler_arg"
+    assert ensure_calls[0]["locale_override"] is None
+    assert ensure_calls[0]["mode"] == "persona"
+
+
+def test_cli_transcribe_mode_ensure_heavy_models_no_speaker(monkeypatch):
+    """Transcribe-mode CLI passes ``mode`` to ``ensure_heavy_models`` without ``persona_name``."""
+    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler")
+    ensure_calls: list[dict] = []
+
+    class _RecordingController:
+        def __init__(self, _config, _callbacks):
+            pass
+
+        def ensure_heavy_models(self, **kwargs):
+            ensure_calls.append(kwargs)
+            return True
+
+        def start(self, *_a, **_k):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.PipelineController", _RecordingController)
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    main(["--mode", "transcribe"])
+
+    assert len(ensure_calls) == 1
+    assert ensure_calls[0]["mode"] == "transcribe"
+    assert ensure_calls[0].get("persona_name") is None
+
+
+def test_cli_no_double_load(monkeypatch):
+    """``main()`` must not call ``load_models`` directly when ``ensure_heavy_models`` is used."""
+    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler", locale="en")
     load_calls: list[dict] = []
 
     class _RecordingController:
         def __init__(self, _config, _callbacks):
             pass
+
+        def ensure_heavy_models(self, **_kwargs):
+            return True
 
         def load_models(self, **kwargs):
             load_calls.append(kwargs)
@@ -162,43 +298,11 @@ def test_main_load_models_uses_config_persona_when_cli_omitted(monkeypatch):
 
     main([])
 
-    assert load_calls[0]["persona_name"] == "default-host"
-
-
-def test_main_transcribe_load_models_omits_persona_name(monkeypatch):
-    """Transcribe-mode ``main()`` must not pass ``persona_name`` into ``load_models``."""
-    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler")
-    load_calls: list[dict] = []
-
-    class _RecordingController:
-        def __init__(self, _config, _callbacks):
-            pass
-
-        def load_models(self, **kwargs):
-            load_calls.append(kwargs)
-
-        def start(self, *_a, **_k):
-            pass
-
-        def stop(self):
-            pass
-
-    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
-    monkeypatch.setattr("heckler.controller.PipelineController", _RecordingController)
-    monkeypatch.setattr(
-        "heckler.pipeline.time.sleep",
-        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
-    )
-
-    main(["--mode", "transcribe"])
-
-    assert len(load_calls) == 1
-    assert load_calls[0]["mode"] == "transcribe"
-    assert load_calls[0].get("persona_name") is None
+    assert load_calls == []
 
 
 def test_main_persona_flag_overrides_config(monkeypatch):
-    """``--persona`` CLI flag overrides ``config.persona_name`` for ``load_persona`` (load + start)."""
+    """``--persona`` CLI flag overrides ``config.persona_name`` for ``load_persona`` (ensure + start)."""
     cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler")
     seen: list[Path] = []
 
@@ -232,7 +336,8 @@ def test_main_persona_flag_overrides_config(monkeypatch):
 
     main(["--persona", "stage-host"])
 
-    assert len(seen) == 2
+    # ensure_heavy_models: predicate + load_models each resolve persona; start loads again for Reactor.
+    assert len(seen) == 3
     assert all(p.name == "stage-host" for p in seen)
 
 
@@ -982,8 +1087,8 @@ def test_main_cli_prints_legacy_transcribe_mic_banner(tmp_path, monkeypatch, cap
     assert "[HECKLER] Transcribe mode — mic open. Ctrl+C to stop." in out
 
 
-def test_main_load_models_failure_exits_one(monkeypatch, capsys):
-    """Falsifier: load_models exception path prints the banner and exits 1."""
+def test_main_ensure_heavy_models_failure_exits_one(monkeypatch, capsys):
+    """Falsifier: model load exception path prints the banner and exits 1."""
     cfg = HecklerConfig(anthropic_api_key="test-key")
     monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
 
