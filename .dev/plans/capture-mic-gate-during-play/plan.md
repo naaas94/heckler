@@ -4,7 +4,7 @@
 **Plan name:** `capture-mic-gate-during-play`  
 **Skill:** orchestrator-planning v0.6  
 **Date:** 2026-05-22  
-**Status:** Planning complete — execution not started
+**Status:** Complete (v1.0 — §8 auditor handoff populated 2026-05-22)
 
 ---
 
@@ -165,4 +165,91 @@ None (plan v1.0).
 
 ## §8 Auditor handoff
 
-**Not produced** — populate when execution marks plan *Complete* (requires clean-tree verification at landed SHA per orchestrator-planning §8.1).
+### §8.1 Completion snapshot
+
+| Field | Value |
+|-------|-------|
+| **Handoff tree SHA** | `504ca11319c952c4317a795a1ab4707446bd7b85` (T2 commit; includes T1 `da8aca82`) |
+| **Verification command** | `pytest tests/test_audio_capture.py -q` |
+| **Checkout** | Detached worktree at handoff SHA (parent repo working tree had unrelated unstaged archive moves at audit time) |
+| **Result** | **11 passed** in 2.89s, exit code **0** |
+| **Environment** | Windows, Python via project venv (implicit in local run) |
+
+**Note:** `master` may be ahead of handoff SHA (e.g. `pacing-before-llm` landed after this plan). Audit **capture-mic-gate-during-play** contract evidence at **`504ca113`**; do not attribute post-handoff pipeline changes to this plan.
+
+### §8.2 Artifact chain
+
+| Artifact | Path | `git show 504ca113:<path>` |
+|----------|------|----------------------------|
+| Context map | `.dev/plans/capture-mic-gate-during-play/context-map.md` | OK — scout SHA `e3fd9dc` (stale vs handoff; map content still valid for scope) |
+| Plan | `.dev/plans/capture-mic-gate-during-play/plan.md` | OK at T2 commit; §8 appended post-T2 on working tree |
+| Packet T1 | `.dev/plans/capture-mic-gate-during-play/packets/T1.md` | OK |
+| Packet T2 | `.dev/plans/capture-mic-gate-during-play/packets/T2.md` | OK |
+| Decision log T1 | `.dev/decision-logs/capture-mic-gate-during-play-T1.md` | OK |
+| Superseded tail log | `.dev/decision-logs/tts-mic-gate-tail-T2.md` | OK (supersession banner landed T2) |
+
+### §8.3 §2 evidence (landed)
+
+| §2 row | Shipped artifact | Proof |
+|--------|------------------|-------|
+| **Types — `PlayGateFrameResult`** | `heckler/audio_capture.py:21-26` | `test_play_gate_frame_tick_*` (3 tests) |
+| **Types — `play_gate_frame_tick`** | `heckler/audio_capture.py:29-55` | Same |
+| **Types — `_capture_loop` integration** | `heckler/audio_capture.py:91`, `196-208`, `215-219` | Helper tests + code review; no `torch.hub` in pytest (kill criterion 3 satisfied) |
+| **Types — `_emit_audio_segment` guard** | `heckler/audio_capture.py:116-117` | `test_emit_skips_when_speaker_is_playing` |
+| **Types — `Speaker` / `controller` unchanged** | No diff in T1/T2 commits on those files | `git show da8aca82 --stat` |
+| **Error envelope** | Unchanged raises in `_capture_loop` / `_emit_audio_segment` | `test_capture_loop_rejects_non_16khz`, `test_emit_rejects_non_float32_or_multidim` |
+| **Naming** | `play_gate_frame_tick`, `PlayGateFrameResult`, log path as planned | Grep + decision log |
+| **Logging** | N/A | — |
+| **Tests** | `tests/test_audio_capture.py` (+3 helper, emit suite retained) | §8.1 run: 11 passed |
+| **CLI surface** | N/A | — |
+
+**Landed (docs, T2):** `heckler_seed.md` §4.1 / §4.7 / Coupling Surface 2; `README.md` env table sentence; `CHANGELOG.MD` `capture-mic-gate-during-play` section; `tts-mic-gate-tail-T2.md` §Superseded assumption.
+
+**Deferred (documented, non-blocking):** No pytest asserts `heckler_seed.md` / `README.md` prose sync (`CHANGELOG.MD` T2 note); no integration test for max-speech branch while gated (`capture-mic-gate-during-play-T1.md` §Items deferred).
+
+### §8.4 §5 disposition
+
+| §5.2 / §5.4 item | Status | Evidence |
+|------------------|--------|----------|
+| Shared `Speaker.is_playing` Event (§5.2) | **closed** | `controller.py` unchanged in T1; persona wiring unchanged |
+| Discard PCM while gated (§5.2) | **closed** | Per-frame `continue` at `audio_capture.py:205-206` after drain |
+| VAD reset on clear edge (§5.2) | **closed** | `tick.reset_vad` → `new_vad_iterator()` at `207-208`; `test_play_gate_frame_tick_reset_vad_on_clear_edge` |
+| Emit-time second defense (§5.2) | **closed** | `_emit_audio_segment` guard retained; emit tests pass |
+| `tts_gate_tail_ms` landed (§5.2) | **treat-as-prediction** | Pre-existing from `tts-mic-gate-tail`; not modified by this plan |
+| Emit-only test gap (§5.4) | **closed** | Three `test_play_gate_frame_tick_*` tests added |
+| Silero hub in CI (§5.4) | **closed** | No new hub tests; `test_capture_loop_rejects_non_16khz` still only early-fail path |
+| Max-speech flush while playing (§5.4) | **closed** | Discard branch `215-219`; normal path never reaches flush while gated due to `continue` |
+| Transcribe never-set Event (§5.4) | **closed** | No `controller.py` changes |
+| `heckler_seed.md` misleading prose (§5.4) | **closed** | T2 doc commits; Rule 1 + Rule 2 language |
+| Pacing-before-llm conflation (§5.4, suspected) | **closed** | T2 kill (1) honored; separate plan landed later at `0da7ac52` |
+
+### §8.5 Cold-read seeds
+
+Recommended narrative-blind Phase 0 read order:
+
+1. `heckler/audio_capture.py` — `play_gate_frame_tick`, `_capture_loop` gate integration
+2. `tests/test_audio_capture.py` — helper falsifiers + emit guard
+3. `heckler/controller.py` — `_start_persona_mode` / `_start_transcribe_mode` `is_playing` wiring (adjacent, should be untouched)
+4. `heckler/speaker.py` — `is_playing` set/clear + tail (complementary, not owned by this plan)
+5. `heckler_seed.md` — §4.7 mic gate contract + Coupling Surface 2 row (~783)
+
+### §8.6 Audit remediation cross-link
+
+Absent — no §7 amendments fired for v1.0.
+
+---
+
+## Execution review (orchestrator, pre-audit)
+
+**Verdict:** Landed work matches plan contracts; safe for adversarial audit at **`504ca113`**.
+
+| Subtask | Assessment |
+|---------|------------|
+| **T1** | `play_gate_frame_tick` semantics match §2 (playing → clear segment; clear edge → `reset_vad`). Loop skips VAD while gated; emit guard kept; max-speech discard is defense-in-depth. Decision log records Flag 2 discard-whole-segment policy and barge-in tradeoff. |
+| **T2** | Seed/README/CHANGELOG supersession done; `tts-mic-gate-tail-T2.md` banner present; plan bundle tracked in `504ca113`. |
+
+**Residual risks for auditor (not blockers):**
+
+- Loop behavior under real Silero + hardware is not pytest-covered (by design).
+- Post-handoff commits on `master` may confuse scope — anchor on handoff SHA above.
+- Parent working tree may be dirty; re-run §8.1 via worktree if verifying locally after further edits.

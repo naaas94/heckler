@@ -4,7 +4,7 @@
 **Plan name:** `pacing-before-llm`  
 **Skill:** orchestrator-planning v0.6  
 **Date:** 2026-05-22  
-**Status:** Draft (planning complete; §8 auditor handoff populated at *Complete*)
+**Status:** Complete (v1.0 — §8 auditor handoff populated 2026-05-22)
 
 ---
 
@@ -208,4 +208,95 @@ None at v1.0.
 
 ## §8 Auditor handoff
 
-*Populated when plan status moves to **Complete** after all subtasks land and verification runs on a clean checkout of the handoff SHA.*
+### §8.1 Completion snapshot
+
+- **Tree SHA:** `692dfa0c9a398544b611d1d59b7609f8e0609261` (T3 commit; includes T1→T2→T4→T3 landing order)
+- **Subtask commits:** `25ff36f9` (T1) → `0da7ac52` (T2) → `ca397e9e` (T4) → `692dfa0c` (T3)
+- **Verification command** (run 2026-05-22 on implementation artifacts matching this SHA; `git diff 692dfa0c` empty for all pacing paths below):
+
+```text
+pytest tests/test_pacing_gate.py \
+  tests/test_pipeline.py::test_reaction_worker_pre_llm_pacing_skips_react \
+  tests/test_pipeline.py::test_reaction_worker_pacing_gate_after_successful_react \
+  tests/test_pipeline.py::test_execute_spoken_reply_records_before_speak \
+  tests/test_controller.py::test_on_reaction_not_fired_on_pre_llm_pacing \
+  tests/test_controller.py::test_on_reaction_callback_fires_with_was_spoken_false_on_pacing_gate \
+  tests/test_controller.py::test_on_reaction_callback_fires_with_was_spoken_true_on_success \
+  tests/test_controller.py::test_on_reaction_callback_not_fired_on_llm_error -q
+```
+
+- **Result:** 21 passed, 0 failed, exit code 0 (~4.2s)
+- **Clean-checkout note:** Pacing implementation and test paths match `692dfa0c` with zero working-tree diff. The broader repository working tree at handoff time had **unrelated** unstaged changes (plan archive moves, other plan edits) — not a pristine `git status` clean tree. Pytest targets above are authoritative for this plan’s contract surfaces.
+
+### §8.2 Artifact chain
+
+Read in order:
+
+| # | Path | Notes |
+|---|------|-------|
+| 1 | `.dev/plans/pacing-before-llm/context-map.md` | Scout @ `58f10f1` — **stale** vs handoff SHA; file map and couplings still directionally valid |
+| 2 | `.dev/plans/pacing-before-llm/plan.md` | This document |
+| 3 | `.dev/plans/pacing-before-llm/packets/T1.md` … `T4.md` | Executor packets |
+| 4 | `.dev/decision-logs/pacing-before-llm-T1.md` | `cooldown_status` API + override tradeoff |
+| 5 | `.dev/decision-logs/pacing-before-llm-T2.md` | Pipeline branch + event shape + gui-T1 callback rule |
+| 6 | `.dev/decision-logs/gui-T1.md` | Landed `on_reaction` contract (still authoritative for post-LLM paths) |
+
+All paths above pass `git show 692dfa0c:<path>` except the handoff block being added to `plan.md` on audit prep.
+
+**Hygiene (open):** `692dfa0c` still tracks `.dev/plans/_pending/pacing-before-llm/context-map.md` (duplicate of promoted map). Working tree may delete it unstaged — retired-string / promotion cleanup not in plan scope.
+
+### §8.3 §2 evidence (landed)
+
+| §2 row | Shipped artifact | Proof |
+|--------|------------------|-------|
+| **Types — `cooldown_status`** | `heckler/pacing_gate.py` — `PacingGate.cooldown_status`, `_cooldown_state_locked` | `tests/test_pacing_gate.py` — `test_cooldown_status_*`, `test_cooldown_status_ignores_score_override_while_evaluate_bypasses` |
+| **Types — `evaluate` unchanged** | `heckler/pacing_gate.py` — `PacingGate.evaluate` | Existing `tests/test_pacing_gate.py` override cases; `tests/test_pipeline.py::test_reaction_worker_pacing_gate_after_successful_react` |
+| **Types — pipeline order** | `heckler/pipeline.py` — `_run_reaction_worker` L179–199 pre-LLM branch; L240+ post-`react()` `evaluate` | `tests/test_pipeline.py::test_reaction_worker_pre_llm_pacing_skips_react`, `test_reaction_worker_pacing_gate_after_successful_react` |
+| **Types — pre-LLM `HeckleEvent`** | `heckler/pipeline.py` L181–196 | Field assertions in `test_reaction_worker_pre_llm_pacing_skips_react` |
+| **Types — `passed_pacing_gate` tri-state** | `heckler/models.py` L61 comment | Pre-LLM (`False`), score-gate (`None` in existing branches), post-LLM pass (`True`) covered by pipeline tests |
+| **Types — `on_reaction`** | `heckler/pipeline.py` — no callback in pre-LLM branch; L259–263 post-LLM pacing | `tests/test_controller.py::test_on_reaction_not_fired_on_pre_llm_pacing`, `test_on_reaction_callback_fires_with_was_spoken_false_on_pacing_gate` |
+| **Error envelope** | Unchanged reactor/TTS paths | No new types; existing pipeline error branches untouched |
+| **Naming** | `cooldown_status`; logs at `.dev/decision-logs/pacing-before-llm-T{1,2}.md` | Paths exist at HEAD |
+| **Logging** | `HeckleLogger.log_event` via pre-LLM `HeckleEvent` | Pipeline test event assertions |
+| **Tests** | `tests/test_pacing_gate.py`, `tests/test_pipeline.py`, `tests/test_controller.py` | §8.1 command |
+| **CLI surface** | N/A | — |
+| **Invariant — `record_output` before `speak`** | `heckler/pipeline.py` — `_execute_spoken_reply` L46–47 | `tests/test_pipeline.py::test_execute_spoken_reply_records_before_speak` |
+
+**Docs (T4):** `.dev/eval-strategy.md` §4 (post-LLM vs pre-LLM cohorts); `README.md` (pre-LLM skip, override, `on_reaction`); `CHANGELOG.MD` pacing-before-llm section (T1/T2/T4 bullets).
+
+### §8.4 §5 disposition
+
+| §5.2 / §5.4 item | Status | Evidence / note |
+|------------------|--------|-----------------|
+| Pre-LLM skip without override (§5.2) | **closed** | `cooldown_status` + pipeline L179–199; T1/T2 decision logs; falsifier `test_cooldown_status_ignores_score_override_while_evaluate_bypasses` |
+| Single reaction worker serializes (§5.2) | **closed** | T2 decision log assumption; no concurrent `react` in architecture |
+| `event_reactor_results` only with `reactor_result` (§5.2) | **closed** | `heckler/event_store.py` insert guard unchanged; pre-LLM events have `reactor_result=None` |
+| gui-T1 `on_reaction` rule (§5.2) | **closed** | Pre-LLM: no callback; post-LLM pacing: `was_spoken=False` — controller tests |
+| Operators accept LLM savings tradeoff (§5.2) | **treat-as-prediction** | Product choice; code implements skip — auditor confirms behavior only |
+| `evaluate` requires score for override (§5.4) | **closed** | Override only in `evaluate()` after `react()` |
+| `record_output` before `speak` (§5.4) | **closed** | `_execute_spoken_reply` unchanged; test green |
+| Post-LLM pacing event has `reactor_result` (§5.4) | **closed** | `test_reaction_worker_pacing_gate_after_successful_react` |
+| `on_reaction` on pacing reject (§5.4) | **closed** | Pre-LLM: not fired; post-LLM: fired — split tests |
+| `context_buffer.push` after pacing reject (§5.4) | **closed** | Pre-LLM branch L198; post-LLM L264 — pipeline test asserts push |
+| `test_reaction_worker_pacing_gate_after_successful_react` encodes post-LLM (§5.4) | **closed** | Test retained; asserts `cooldown_status` then `evaluate` after `react` |
+| MagicMock missing `cooldown_status` (§5.4 suspected) | **closed** | `_reaction_worker_pacing_mock` in `tests/test_pipeline.py` and `tests/test_controller.py` |
+
+**Open (non-blocking for code contract):**
+
+- **`CHANGELOG.MD`** — T3 landing (`692dfa0c`) not yet reflected; T2 entry still says controller `on_reaction` coverage deferred to T3.
+- **`_pending/` duplicate context-map** — still at HEAD `692dfa0c`; promotion cleanup optional amendment.
+
+### §8.5 Cold-read seeds
+
+Auditor Phase 0 (narrative-blind) recommended order:
+
+1. `heckler/pacing_gate.py` — `cooldown_status` vs `evaluate` split
+2. `heckler/pipeline.py` — `_run_reaction_worker` pre-LLM branch (L179–199) vs post-`react()` path (L240+)
+3. `heckler/models.py` — `HeckleEvent.passed_pacing_gate` comment
+4. `tests/test_pipeline.py` — `test_reaction_worker_pre_llm_pacing_skips_react`, `test_reaction_worker_pacing_gate_after_successful_react`
+5. `.dev/eval-strategy.md` — §4 pacing cohort split
+6. `.dev/decision-logs/pacing-before-llm-T2.md` — callback + event-shape authority
+
+### §8.6 Audit remediation cross-link
+
+Omitted — no §7 amendments fired for v1.0.
