@@ -173,6 +173,9 @@ class HecklerMainWindow(QMainWindow):
             return None
         return text
 
+    def selected_persona_name(self) -> str:
+        return self._persona_combo.currentText()
+
     def _wire_mode_from_config(self) -> None:
         mode = (self._config.mode or "persona").strip().lower()
         if mode == "transcribe":
@@ -189,7 +192,9 @@ class HecklerMainWindow(QMainWindow):
         self._session_name.setEnabled(ready and self._selected_mode() == "transcribe")
         self._start_stop.setEnabled(ready)
         persona_mode = self._selected_mode() == "persona"
-        self._persona_combo.setEnabled(ready and self._controller.is_running and persona_mode)
+        self._persona_combo.setEnabled(
+            ready and persona_mode and not getattr(self, "_reloading", False)
+        )
         self._locale_combo.setEnabled(
             ready and persona_mode and not getattr(self, "_reloading", False)
         )
@@ -241,6 +246,23 @@ class HecklerMainWindow(QMainWindow):
         session = self._session_name.text().strip() or None
         try:
             if mode == "persona":
+                locale_override = self.selected_locale_override()
+
+                def _on_prog(msg: str) -> None:
+                    sb = self.statusBar()
+                    if sb:
+                        sb.showMessage(msg)
+
+                try:
+                    self._controller.ensure_heavy_models(
+                        persona_name=persona or None,
+                        locale_override=locale_override,
+                        on_progress=_on_prog,
+                        mode="persona",
+                    )
+                except Exception as e:
+                    self._show_error(f"Model load failed: {e}")
+                    return
                 self._controller.start("persona", persona_name=persona)
             else:
                 self._controller.start("transcribe", session_name=session)

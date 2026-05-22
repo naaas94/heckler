@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+from typing import Callable
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -23,10 +24,18 @@ class ModelLoadThread(QThread):
     finished_ok = pyqtSignal()
     failed = pyqtSignal(str)
 
-    def __init__(self, controller: PipelineController, config: HecklerConfig) -> None:
+    def __init__(
+        self,
+        controller: PipelineController,
+        mode: str,
+        persona_name_fn: Callable[[], str],
+        locale_override_fn: Callable[[], str | None],
+    ) -> None:
         super().__init__()
         self._controller = controller
-        self._config = config
+        self._mode = mode
+        self._persona_name_fn = persona_name_fn
+        self._locale_override_fn = locale_override_fn
 
     def run(self) -> None:  # pragma: no cover — exercised via integration / manual run
         threading.current_thread().name = "heckler-gui-loader"
@@ -35,12 +44,13 @@ class ModelLoadThread(QThread):
             def on_prog(msg: str) -> None:
                 self.progress.emit(msg)
 
-            mode = (self._config.mode or "persona").strip().lower()
-            persona_name = self._config.persona_name if mode == "persona" else None
+            persona_name = self._persona_name_fn() if self._mode == "persona" else None
+            locale_override = self._locale_override_fn()
             self._controller.load_models(
                 on_progress=on_prog,
-                mode=mode,
+                mode=self._mode,
                 persona_name=persona_name,
+                locale_override=locale_override,
             )
             self.finished_ok.emit()
         except Exception as e:
@@ -59,7 +69,13 @@ def main() -> None:
     window.attach_bridge(bridge)
     window.show()
 
-    loader = ModelLoadThread(controller, config)
+    mode = (config.mode or "persona").strip().lower()
+    loader = ModelLoadThread(
+        controller,
+        mode=mode,
+        persona_name_fn=window.selected_persona_name,
+        locale_override_fn=window.selected_locale_override,
+    )
 
     def on_progress(msg: str) -> None:
         status_bar = window.statusBar()

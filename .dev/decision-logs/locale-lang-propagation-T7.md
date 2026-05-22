@@ -1,3 +1,8 @@
+> **SUPERSEDED** by `persona-speech-reload` plan (2026-05-22).
+> Decision: `ModelLoadThread` now uses callable snapshots read at `run()` time instead of `config.persona_name` at init.
+> See `.dev/decision-logs/persona-speech-reload-T4.md` for the landed behavior.
+> The "ModelLoadThread passes config.persona_name" statement below describes pre-T4 behavior only.
+
 # locale-lang-propagation — T7 — GUI ModelLoadThread persona at load
 
 ## Chosen approach

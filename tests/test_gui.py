@@ -219,7 +219,6 @@ def test_signal_bridge_reaction_appends(qtbot):
 
 
 def test_model_load_thread_invokes_load_models_off_thread(qtbot):
-    cfg = HecklerConfig(persona_name="test-persona", mode="persona")
     ctrl = MagicMock()
     call_idents: list[int] = []
 
@@ -229,25 +228,100 @@ def test_model_load_thread_invokes_load_models_off_thread(qtbot):
             on_progress("step")
 
     ctrl.load_models.side_effect = load_models
-    thread = ModelLoadThread(ctrl, cfg)
+    thread = ModelLoadThread(
+        ctrl,
+        mode="persona",
+        persona_name_fn=lambda: "test-persona",
+        locale_override_fn=lambda: None,
+    )
     with qtbot.waitSignal(thread.finished_ok, timeout=5000):
         thread.start()
     ctrl.load_models.assert_called_once()
     assert ctrl.load_models.call_args.kwargs["persona_name"] == "test-persona"
+    assert ctrl.load_models.call_args.kwargs["locale_override"] is None
     assert ctrl.load_models.call_args.kwargs["mode"] == "persona"
     assert len(call_idents) == 1
     assert call_idents[0] != threading.main_thread().ident
 
 
 def test_model_load_thread_transcribe_mode_omits_persona_name(qtbot):
-    cfg = HecklerConfig(persona_name="heckler", mode="transcribe")
     ctrl = MagicMock()
     ctrl.load_models.side_effect = lambda **kwargs: None
-    thread = ModelLoadThread(ctrl, cfg)
+    thread = ModelLoadThread(
+        ctrl,
+        mode="transcribe",
+        persona_name_fn=lambda: "heckler",
+        locale_override_fn=lambda: "es",
+    )
     with qtbot.waitSignal(thread.finished_ok, timeout=5000):
         thread.start()
     assert ctrl.load_models.call_args.kwargs["persona_name"] is None
+    assert ctrl.load_models.call_args.kwargs["locale_override"] == "es"
     assert ctrl.load_models.call_args.kwargs["mode"] == "transcribe"
+
+
+def test_model_load_thread_reads_combo_at_run_time(qtbot):
+    """F1: persona_name_fn is invoked in run(), not captured at thread construction."""
+    ctrl = MagicMock()
+    ctrl.load_models.side_effect = lambda **kwargs: None
+    calls: list[str] = []
+
+    def persona_name_fn() -> str:
+        calls.append("run")
+        return "live-persona"
+
+    thread = ModelLoadThread(
+        ctrl,
+        mode="persona",
+        persona_name_fn=persona_name_fn,
+        locale_override_fn=lambda: None,
+    )
+    assert calls == []
+    with qtbot.waitSignal(thread.finished_ok, timeout=5000):
+        thread.start()
+    assert calls == ["run"]
+    assert ctrl.load_models.call_args.kwargs["persona_name"] == "live-persona"
+
+
+def test_selected_persona_name(qtbot):
+    with patch("heckler.gui.main_window.list_personas", return_value=["alpha", "beta"]):
+        w = HecklerMainWindow(HecklerConfig(), _stub_controller())
+        qtbot.addWidget(w)
+        w._persona_combo.setCurrentIndex(1)
+        assert w.selected_persona_name() == "beta"
+
+
+def test_persona_combo_enabled_before_pipeline_start(qtbot):
+    """F2: persona combo enabled when models ready and persona mode, pipeline not running."""
+    ctrl = _stub_controller(is_running=False)
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    assert w._persona_combo.isEnabled() is True
+
+
+def test_start_button_ensure_heavy_models_called(qtbot):
+    """D7: Start in persona mode calls ensure_heavy_models before start."""
+    ctrl = _stub_controller(is_running=False)
+    order: list[str] = []
+
+    def ensure_heavy_models(**kwargs):
+        order.append("ensure")
+        return False
+
+    def start(*args, **kwargs):
+        order.append("start")
+
+    ctrl.ensure_heavy_models.side_effect = ensure_heavy_models
+    ctrl.start.side_effect = start
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._on_start_stop()
+    assert order == ["ensure", "start"]
+    ctrl.ensure_heavy_models.assert_called_once()
+    assert ctrl.ensure_heavy_models.call_args.kwargs["mode"] == "persona"
+    assert ctrl.ensure_heavy_models.call_args.kwargs["locale_override"] is None
 
 
 @patch("heckler.gui.main_window.QDesktopServices.openUrl")
