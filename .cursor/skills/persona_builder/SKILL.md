@@ -68,6 +68,7 @@ name = "<display name>"         # non-empty string — required
 description = "<one sentence>"  # string — required
 
 [voice]                         # optional section; omit keys you do not override
+locale = "<en|en-us|en-gb|es>"  # optional; STT/TTS only when baked at load_models, not on swap_persona alone
 kokoro_voice = "<id>"
 kokoro_speed = <float>
 
@@ -87,6 +88,7 @@ min_word_count = <int>
 
 | TOML `[section].key` | `HecklerConfig` field |
 |----------------------|----------------------|
+| `[voice].locale` | `locale` (resolved to `whisper_language` / `kokoro_lang_code` after merge) |
 | `[voice].kokoro_voice` | `kokoro_voice` |
 | `[voice].kokoro_speed` | `kokoro_speed` |
 | `[llm].model` | `llm_model` |

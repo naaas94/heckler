@@ -1,6 +1,6 @@
 # HECKLER
 
-HECKLER is a local reactive audio pipeline for **English** speech. In **persona** mode it listens on the microphone, segments with Silero VAD, transcribes with faster-whisper (CUDA in the intended setup), scores lexical density, asks an LLM (via [LiteLLM](https://github.com/BerriAI/litellm)) for short commentary, applies pacing and quality gates, synthesizes speech with Kokoro, and plays through the default output device. During persona-mode cooldown (minimum interval since the last spoken output), the pipeline may skip the LLM entirely when still inside that window; `score_override_threshold` does not apply on that pre-LLM path (override still applies after a successful reaction when evaluating TTS). The live GUI reaction preview (`on_reaction`) does not fire on pre-LLM pacing rejects—only when a `ReactorResult` exists (post-LLM paths, including post-LLM pacing rejects); see `.dev/decision-logs/pacing-before-llm-T2.md`. In **transcribe** mode it runs **capture + Whisper only**: utterances print as `[TRANSCRIBE]` lines, chunks are stored in SQLite alongside the main database, and stopping a session writes a **markdown** file under the configured transcripts directory (default `transcripts/`). The default chat model for persona mode is **OpenAI GPT-4o mini** (`openai/gpt-4o-mini`). Persona-mode `HeckleEvent` rows are persisted in **SQLite** (default `logs/heckler.db`); use **`HECKLER_DATABASE_PATH`** to override the database file path (same file holds transcript session tables in transcribe mode).
+HECKLER is a local reactive audio pipeline for **multilingual speech** (default locale **English**). A single **`locale`** knob on `HecklerConfig` keeps faster-whisper and Kokoro aligned via `heckler/locale.py`. In **persona** mode it listens on the microphone, segments with Silero VAD, transcribes with faster-whisper (CUDA in the intended setup), scores lexical density, asks an LLM (via [LiteLLM](https://github.com/BerriAI/litellm)) for short commentary, applies pacing and quality gates, synthesizes speech with Kokoro, and plays through the default output device. During persona-mode cooldown (minimum interval since the last spoken output), the pipeline may skip the LLM entirely when still inside that window; `score_override_threshold` does not apply on that pre-LLM path (override still applies after a successful reaction when evaluating TTS). The live GUI reaction preview (`on_reaction`) does not fire on pre-LLM pacing rejects—only when a `ReactorResult` exists (post-LLM paths, including post-LLM pacing rejects); see `.dev/decision-logs/pacing-before-llm-T2.md`. In **transcribe** mode it runs **capture + Whisper only**: utterances print as `[TRANSCRIBE]` lines, chunks are stored in SQLite alongside the main database, and stopping a session writes a **markdown** file under the configured transcripts directory (default `transcripts/`). The default chat model for persona mode is **OpenAI GPT-4o mini** (`openai/gpt-4o-mini`). Persona-mode `HeckleEvent` rows are persisted in **SQLite** (default `logs/heckler.db`); use **`HECKLER_DATABASE_PATH`** to override the database file path (same file holds transcript session tables in transcribe mode).
 
 Run headless from the terminal with `python -m heckler` / the `heckler` console script, or use the **PyQt6** desktop app via the `heckler-gui` console script (mode toggle, persona picker, live feed, transcribe session export).
 
@@ -39,6 +39,7 @@ Values are read from `.env` (via `python-dotenv`) in `heckler/config.py` → `lo
 | `HECKLER_DATABASE_PATH` | SQLite database file path (non-empty overrides default `logs/heckler.db`). Holds persona `HeckleEvent` rows and, in transcribe mode, transcript session/chunk tables. Replaces the retired **`log_dir`** / daily JSONL steady-state sink. |
 | `HECKLER_PERSONA` | Persona id for the prompt bundle under `prompts/<name>/` (non-empty after strip overrides default `heckler`; whitespace-only falls back to the default). |
 | `HECKLER_MODE` | `persona` or `transcribe` (non-empty after strip; default `persona`). Use CLI `--mode` when you want argparse to enforce the choice. |
+| `HECKLER_LOCALE` | Unified STT/TTS locale slug (non-empty after strip; default `en`). Maps to Whisper `whisper_language` and Kokoro `kokoro_lang_code` at config load — do not set `WHISPER_LANGUAGE` or raw Kokoro `lang_code` in the environment. Unknown slugs raise `UnsupportedLocaleError` when the config is resolved. |
 | `HECKLER_SESSION_NAME` | Optional default session label for transcribe mode (non-empty after strip; otherwise a short id-derived label is used). |
 | `HECKLER_TRANSCRIPTS_DIR` | Directory for transcribe markdown exports (non-empty after strip; default `transcripts`). |
 | `HECKLER_LLM_MODEL` | LiteLLM model id (non-empty overrides default `openai/gpt-4o-mini`). |
@@ -61,6 +62,21 @@ Values are read from `.env` (via `python-dotenv`) in `heckler/config.py` → `lo
 | `LANGCHAIN_API_KEY` / `LANGSMITH_API_KEY` | API key for LangSmith / LangChain tracing when tracing flags are on. |
 
 Additional tuning lives on `HecklerConfig` defaults in `heckler/config.py` (sample rate, VAD thresholds, transcribe-mode timing defaults, queue size, default SQLite path, etc.) but is not all exposed as environment variables in v1.
+
+### Locale (STT + TTS)
+
+Operators set **`locale`** only (not separate Whisper/Kokoro env vars). Supported slugs at load time (see `heckler/locale.py`):
+
+| Locale slug | Whisper language | Kokoro `lang_code` |
+|-------------|------------------|--------------------|
+| `en` | `en` | `a` (American English) |
+| `en-us` | `en` | `a` |
+| `en-gb` | `en` | `b` (British English) |
+| `es` | `es` | `e` (Spanish) |
+
+- **`HECKLER_LOCALE`** sets the process-default locale before `load_config()` resolves whisper/kokoro fields.
+- Persona **`[voice].locale`** in `prompts/<persona>/persona.toml` overrides the merged config when heavy models are built with **`load_models(persona_name=...)`** (or when that persona is already selected via env before load). LLM register/language stays in `system.md` / `examples.json` only.
+- **`swap_persona`** (CLI/GUI hot-swap) updates Reactor prompts and gate-related config only; **STT/TTS language stays whatever was fixed at the last `load_models` call**. To change Whisper/Kokoro language after a persona or locale change, call **`load_models`** again with the desired persona (or restart the process).
 
 ## Usage
 
