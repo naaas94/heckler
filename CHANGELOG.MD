@@ -8,6 +8,8 @@ Plan: post-playback acoustic tail on `Speaker.is_playing` before mic capture res
 
 - T2 (Speaker post-playback mic-gate tail): After successful **`sd.play`**, **`Speaker.speak`** sleeps **`tts_gate_tail_ms`** while **`is_playing`** stays set, then clears in **`finally`**; synthesis and play errors clear without tail. **`+`** **`tests/test_speaker.py`** tail-hold, zero-tail, error-path, and latency-excludes-tail falsifiers; default test fixture uses **`tts_gate_tail_ms=0`**. **Rationale:** Digital playback end precedes acoustic bleed; extending the shared gate suppresses echo transcripts without changing capture or pacing order. Decision log: **`.dev/decision-logs/tts-mic-gate-tail-T2.md`**.
 
+- T3 (Docs and plan bundle): **`heckler_seed.md`** mic-gate steps and Coupling Surface 2 now describe the post-playback acoustic tail; **`README.md`** and **`.env.example`** document **`TTS_GATE_TAIL_MS`** (default **400**, **`0`** disables). **Rationale:** Operators and seed readers see the same contract as **`Speaker.speak`** / **T2** without doc/code drift. **Deferred (adversarial §2.1):** no pytest asserts README or **`heckler_seed.md`** prose stays synchronized with config defaults — markdown hygiene remains audit/planning discipline.
+
 ## gui-launcher — 2026-05-17
 
 Plan: PyQt6 GUI launcher replacing the blocking CLI `main()` loop with a Qt event loop, persona hot-swap, mode switching, and live transcript/reaction feeds. Full decomposition: `.dev/plans/gui-launcher/plan.md`.

@@ -49,6 +49,7 @@ Values are read from `.env` (via `python-dotenv`) in `heckler/config.py` → `lo
 | `SCORE_THRESHOLD` | Minimum LLM self-score to accept commentary (default `0.65`). |
 | `PACING_INTERVAL` | Minimum seconds between spoken outputs / cooldown baseline (default `12.0`). |
 | `KOKORO_VOICE` | Kokoro voice id (default `af_sarah`). |
+| `TTS_GATE_TAIL_MS` | Milliseconds to keep the mic gate (`Speaker.is_playing`) set after TTS playback ends, so speaker bleed is not transcribed (default `400`; `0` clears immediately after playback). |
 | `LOG_DENSITY_FAILURES` | If `true`, persist density-gate rejects via the same SQLite event path as other events; default `false` drops them silently. |
 
 **Optional observability (hosted traces)** — LiteLLM and provider SDKs read these from the process environment when present; heckler does not require them for normal runs.

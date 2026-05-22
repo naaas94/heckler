@@ -582,9 +582,10 @@ class Speaker:
         2. Synthesize: generator = self._pipeline(comment, voice=config.kokoro_voice, speed=config.kokoro_speed)
         3. Collect all audio chunks into single np array (Kokoro yields multiple chunks for longer text)
         4. sounddevice.play(audio, samplerate=24000, blocking=True)
-        5. self.is_playing.clear()  ← ungate mic after playback ends
+        5. If config.tts_gate_tail_ms > 0: time.sleep(tail_ms / 1000) while gate stays set (acoustic bleed buffer)
+        6. self.is_playing.clear()  ← ungate mic after playback and optional tail (finally block)
 
-        On synthesis error: clear is_playing, log, re-raise as SpeakerError.
+        On synthesis error or sd.play exception: clear is_playing without tail, log, re-raise as SpeakerError.
         """
 
     def _collect_audio(self, generator) -> np.ndarray:
@@ -595,7 +596,7 @@ class Speaker:
         """
 ```
 
-**Mic gate contract:** `is_playing` is a `threading.Event`. `AudioCapture._capture_loop` checks `speaker.is_playing.is_set()` before putting a chunk to the queue. This prevents the system from transcribing its own TTS output. The event is set before synthesis begins, not before playback — this closes a window where synthesis takes 200ms and the mic could capture the first frames of TTS.
+**Mic gate contract:** `is_playing` is a `threading.Event`. `AudioCapture._capture_loop` checks `speaker.is_playing.is_set()` before putting a chunk to the queue. This prevents the system from transcribing its own TTS output. The event is set before synthesis begins, not before playback — this closes a window where synthesis takes 200ms and the mic could capture the first frames of TTS. After digital playback ends, the gate stays set for `config.tts_gate_tail_ms` (default **400** ms, env **`TTS_GATE_TAIL_MS`**, **`0`** disables) so speaker bleed into the mic path does not produce echo transcripts; `speak()` latency return remains synthesis-only and excludes the tail sleep.
 
 **Kokoro sample rate:** Kokoro outputs 24kHz audio. `sounddevice.play()` must receive `samplerate=24000`, not 16000. These are different sample rates in the pipeline (capture=16kHz, playback=24kHz) — the executor must not mix them.
 
@@ -778,9 +779,9 @@ AudioChunk.audio dtype and shape
 **Surface 2** · confirmed
 ```
 speaker.is_playing threading.Event
-  contract: set before TTS synthesis, cleared after playback completes
+  contract: set before TTS synthesis; cleared after playback plus post-playback acoustic tail (tts_gate_tail_ms, default 400 ms)
   modules: speaker.py (owner) → audio_capture.py (checker)
-  failure mode: mic captures TTS output, system heckles itself recursively
+  failure mode: mic captures TTS output (including speaker bleed after digital playback ends), system heckles itself recursively
   coupling: AudioCapture receives Speaker.is_playing at construction time — not a global
 ```
 
