@@ -212,6 +212,7 @@ def load_config() -> HecklerConfig:
 **Dependencies:** `sounddevice`, `numpy`, `torch` (silero-vad loaded via `torch.hub`)
 
 **Key design decisions:**
+- While `Speaker.is_playing` is set (TTS synthesis, playback, and `tts_gate_tail_ms` tail), `_capture_loop` applies **Rule 1** via `play_gate_frame_tick`: no Silero VAD segment formation, in-progress capture discarded, `"start"` ignored, `VADIterator` reset on the first frame after unmute. `_emit_audio_segment` still skips enqueue when gated (second defense).
 - silero-vad v4 runs as a stateful iterator — it maintains frame-level state between calls. Do not reinitialize per chunk. One model instance per capture session.
 - Capture is in 30ms frames (480 samples at 16kHz) — the minimum frame size silero-vad accepts. Accumulate frames into a speech buffer while VAD returns `True`. On first `False` after a speech segment, wait `silence_duration_ms` before closing the chunk.
 - If `max_speech_duration_s` is exceeded with no silence, force-close the current chunk. Prevents unbounded buffer on continuous monologues.
@@ -596,7 +597,7 @@ class Speaker:
         """
 ```
 
-**Mic gate contract:** `is_playing` is a `threading.Event`. `AudioCapture._capture_loop` checks `speaker.is_playing.is_set()` before putting a chunk to the queue. This prevents the system from transcribing its own TTS output. The event is set before synthesis begins, not before playback — this closes a window where synthesis takes 200ms and the mic could capture the first frames of TTS. After digital playback ends, the gate stays set for `config.tts_gate_tail_ms` (default **400** ms, env **`TTS_GATE_TAIL_MS`**, **`0`** disables) so speaker bleed into the mic path does not produce echo transcripts; `speak()` latency return remains synthesis-only and excludes the tail sleep.
+**Mic gate contract:** `is_playing` is a `threading.Event` shared from `Speaker` at `AudioCapture` construction. **Rule 1 (capture loop):** While `is_playing` is set (synthesis, blocking playback, and `tts_gate_tail_ms` tail), `_capture_loop` does not form VAD segments — each frame uses `play_gate_frame_tick` to discard in-progress `capturing`/`segment`, skip `vad_iter` (including `"start"` events), and on the first frame after unmute rebuild `VADIterator` (`reset_vad`) so TTS/acoustic bleed is not buffered and flushed post-tail; max-speech force-flush does not enqueue while gated. **Rule 2 (emit defense):** `_emit_audio_segment` retains `if self._is_playing.is_set(): return` before queue put. The event is set before synthesis begins, not only at playback — this closes a window where synthesis takes ~200ms and the mic could capture early TTS frames. After digital playback ends, the gate stays set for `config.tts_gate_tail_ms` (default **400** ms, env **`TTS_GATE_TAIL_MS`**, **`0`** disables) so speaker bleed into the mic path does not produce echo transcripts; `speak()` latency return remains synthesis-only and excludes the tail sleep.
 
 **Kokoro sample rate:** Kokoro outputs 24kHz audio. `sounddevice.play()` must receive `samplerate=24000`, not 16000. These are different sample rates in the pipeline (capture=16kHz, playback=24kHz) — the executor must not mix them.
 
@@ -779,9 +780,9 @@ AudioChunk.audio dtype and shape
 **Surface 2** · confirmed
 ```
 speaker.is_playing threading.Event
-  contract: set before TTS synthesis; cleared after playback plus post-playback acoustic tail (tts_gate_tail_ms, default 400 ms)
+  contract: set before TTS synthesis; cleared after playback plus post-playback acoustic tail (tts_gate_tail_ms, default 400 ms). While set, AudioCapture._capture_loop discards VAD segment formation (play_gate_frame_tick); _emit_audio_segment skips enqueue as second defense
   modules: speaker.py (owner) → audio_capture.py (checker)
-  failure mode: mic captures TTS output (including speaker bleed after digital playback ends), system heckles itself recursively
+  failure mode: mic buffers TTS/bleed during play and emits echo transcripts after gate clears, or captures speaker bleed after digital playback ends — system heckles itself recursively
   coupling: AudioCapture receives Speaker.is_playing at construction time — not a global
 ```
 

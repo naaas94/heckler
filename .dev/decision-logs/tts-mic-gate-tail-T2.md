@@ -13,9 +13,14 @@
 - **Moving tail into `AudioCapture` or reactor dedup:** rejected — plan non-goals; gate extension in `Speaker.speak` is the single choke point shared with persona mode.
 - **Including tail in `tts_latency_ms`:** rejected — contract and metrics would conflate synthesis latency with intentional hold time.
 
+## Superseded assumption
+
+- **Prior assumption:** “`AudioCapture` continues to suppress segments while `is_playing.is_set()`; extending hold in `Speaker` is sufficient without capture changes.”
+- **Superseded by:** `capture-mic-gate-during-play` — emit-only enqueue skip left Silero VAD buffering bleed during play; capture-loop **Rule 1** (`play_gate_frame_tick` in `_capture_loop`) is required. **Post-playback tail in `Speaker.speak` remains valid** and complementary (decision log: `.dev/decision-logs/capture-mic-gate-during-play-T1.md`).
+
 ## Assumptions made
 
-- `AudioCapture` continues to suppress segments while `is_playing.is_set()`; extending hold in `Speaker` is sufficient without capture changes (validated upstream in plan context).
+- ~~`AudioCapture` continues to suppress segments while `is_playing.is_set()`; extending hold in `Speaker` is sufficient without capture changes~~ — **superseded** (see banner above); tail-only hold was necessary but not sufficient.
 - Default **400 ms** is adequate for typical speaker bleed; reverberant setups may need `TTS_GATE_TAIL_MS` tuning (T3 docs).
 - `PacingGate.record_output()` timing stays at speak intent, not playback end — tail does not move that call (frozen in `_execute_spoken_reply`).
 

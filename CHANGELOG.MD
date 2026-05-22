@@ -1,10 +1,20 @@
 # Changelog
 
+## capture-mic-gate-during-play — 2026-05-22
+
+Plan: capture-layer Rule 1 while `Speaker.is_playing` is set — discard VAD segment formation during TTS/playback/tail, reset `VADIterator` on unmute; retain emit-time skip as second defense. Full decomposition: `.dev/plans/capture-mic-gate-during-play/plan.md`.
+
+- T1 (Capture-layer play gate): Added **`PlayGateFrameResult`** and **`play_gate_frame_tick`**; **`AudioCapture._capture_loop`** discards in-progress capture and skips **`vad_iter`** while gated, resets **`VADIterator`** on clear edge, and guards max-speech flush; **`_emit_audio_segment`** enqueue skip retained. **`+`** **`tests/test_audio_capture.py`** pure-helper and emit-skip falsifiers (no **`torch.hub`**). **Rationale:** Emit-only gate left Silero buffering bleed during play; segments flushed after unmute produced echo transcripts. **Decision log:** `.dev/decision-logs/capture-mic-gate-during-play-T1.md`.
+
+- T2 (Docs and tracked plan bundle): **`heckler_seed.md`** §4.1 / §4.7 / Coupling Surface 2 describe loop discard + emit defense; **`README.md`** notes no VAD segmentation while gated; **`tts-mic-gate-tail-T2.md`** supersession banner marks “capture changes unnecessary” replaced (tail remains valid). **`git add`** **`.dev/plans/capture-mic-gate-during-play/`** and decision log for §8.2 archaeology. **Rationale:** Aligns operator/auditor prose with landed capture Rule 1 without touching **`pacing_gate.py`** or reactor order (Flag 5). **Deferred (adversarial §2.1):** no pytest asserts **`heckler_seed.md`** / **`README.md`** prose stays synchronized with **`play_gate_frame_tick`** semantics — markdown hygiene remains audit discipline.
+
 ## pacing-before-llm — 2026-05-22
 
 Plan: score-free pre-LLM cooldown probe on `PacingGate` so pacing can skip `react()` during cooldown; post-LLM `evaluate(score)` + TTS path unchanged. Full decomposition: `.dev/plans/pacing-before-llm/plan.md`.
 
 - T1 (PacingGate cooldown probe): Added **`PacingGate.cooldown_status()`** returning **`(in_cooldown, cooldown_remaining)`** via shared **`_cooldown_state_locked()`**; **`evaluate(score)`** override semantics unchanged. **`+`** **`tests/test_pacing_gate.py`** unit cases and override/evaluate divergence falsifier. **Rationale:** Pipeline T2 needs a score-free probe without calling **`evaluate()`** without a score (Flag 1). **Decision log:** `.dev/decision-logs/pacing-before-llm-T1.md`.
+
+- T2 (Pipeline pre-LLM pacing skip): **`_run_reaction_worker`** probes **`cooldown_status()`** before **`react()`**; pre-LLM cooldown logs pacing-only **`HeckleEvent`** (no **`reactor_result`**, **`passed_score_gate=None`**, **`llm_latency_ms=None`**) and skips **`on_reaction`**; post-**`react()`** **`evaluate(score)`** + TTS path unchanged. **`passed_pacing_gate`** tri-state comment clarified on **`HeckleEvent`**. **`~`** **`tests/test_pipeline.py`** — **`_reaction_worker_pacing_mock`**, existing worker tests mock **`cooldown_status`**, **`+`** **`test_reaction_worker_pre_llm_pacing_skips_react`**. **Rationale:** Avoid LLM cost during cooldown without dropping score override on the post-LLM TTS path. **Decision log:** `.dev/decision-logs/pacing-before-llm-T2.md`. **Deferred (adversarial §2.1):** **`tests/test_controller.py`** **`on_reaction`** coverage — **T3**.
 
 ## tts-mic-gate-tail — 2026-05-21
 

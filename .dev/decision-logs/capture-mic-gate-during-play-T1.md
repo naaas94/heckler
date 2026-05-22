@@ -22,6 +22,6 @@
 
 ## Items deferred
 
-- **`CHANGELOG.MD` / `heckler_seed.md` prose:** deferred to **T2** per plan DAG (T1 files-to-touch exclude docs).
-- **Supersession banner on `tts-mic-gate-tail-T2.md`:** deferred to **T2** (not in T1 files-to-touch).
-- **Max-speech flush while `is_playing` without `_capture_loop` mock:** deferred — per-frame `continue` prevents reaching the flush branch while gated; inline discard is defense-in-depth only; no `torch.hub` integration test (kill criterion 3).
+- **`CHANGELOG.MD` / `heckler_seed.md` prose:** **Landed in T2** (2026-05-22).
+- **Supersession banner on `tts-mic-gate-tail-T2.md`:** **Landed in T2** (2026-05-22).
+- **Max-speech flush while `is_playing` without `_capture_loop` mock:** still deferred — per-frame `continue` prevents reaching the flush branch while gated; inline discard is defense-in-depth only; no `torch.hub` integration test (T1 kill criterion 3).
