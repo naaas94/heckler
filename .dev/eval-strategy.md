@@ -50,7 +50,9 @@ Treat **`event_reactor_results.score`** as model self-report; human labels are *
 - **Post-hoc first** — aligns with subjective humor and avoids interrupting the live loop.
 - **Stratify exports** to maximize information per labeled row:
   - **`spoken = 1`** — real playback path.
-  - **`discard_reason = pacing_gate`** with reactor row — **high self-score lines never aired**; good for pacing vs quality tradeoffs.
+  - **`discard_reason = pacing_gate`** — split into two cohorts (do not treat all rows as “high self-score never aired”):
+    - **Post-LLM pacing reject** — `event_reactor_results` child row present; reactor ran and produced comment/score, but TTS was blocked by `PacingGate.evaluate(score)` (score override still applies on this path). Use for pacing vs quality tradeoffs on generated lines.
+    - **Pre-LLM pacing reject** — no `event_reactor_results` row, `llm_latency_ms` NULL, no reactor payload; `react()` was skipped during cooldown via `PacingGate.cooldown_status()` (score override does not apply). Use for cooldown volume / LLM-cost analysis, not near-miss commentary; `correlation_json` is typically NULL (no LLM call).
   - **Oversample score boundary bands** (e.g. around `SCORE_THRESHOLD`) — where threshold and prompt changes bite; very high scores are often redundant.
   - **Balance `comment_type`** — avoid overfitting one mode.
   - **Bucket transcript length** — short vs long stresses different failure modes.
