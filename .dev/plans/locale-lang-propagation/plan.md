@@ -1,10 +1,10 @@
 # Plan — locale-lang-propagation
 
-**Version:** 1.0  
+**Version:** 1.2.0  
 **Plan name:** `locale-lang-propagation`  
 **Skill:** orchestrator-planning v0.6  
 **Date:** 2026-05-22  
-**Status:** Draft — executors pending (§8 not populated)
+**Status:** Complete (v1.2.0 — amendment landed 2026-05-22)
 
 ---
 
@@ -37,8 +37,8 @@ Implement a **unified locale knob** on `HecklerConfig` that propagates to faster
 
 **Non-goals:**
 
-- GUI language picker or PyQt controls (`heckler/gui/**`).
-- New CLI flags (env + persona TOML + optional `load_models` persona arg only in v1).
+- New GUI **locale picker** widget or PyQt language controls beyond wiring existing `load_models` / `start` call sites (**T6/T7** amend propagation at entry points; not a picker UI).
+- New CLI flags beyond existing `--persona` / `--mode` (amendment wires `--persona` into `load_models`, no new flag strings).
 - LLM “locale” field, Reactor template injection, or automatic register alignment beyond existing prompts.
 - Rebuilding `Transcriber`/`Speaker` on `swap_persona` or mode switch without explicit `load_models` reload.
 - Auto-detect language from audio (Whisper `language=None` “detect” mode).
@@ -55,13 +55,15 @@ Implement a **unified locale knob** on `HecklerConfig` that propagates to faster
 | **Error envelope** | `UnsupportedLocaleError` on unknown/empty locale at `resolve_locale` / `apply_resolved_locale` (fail at config construction, not at first transcribe). `load_config` invalid `TTS_GATE_TAIL_MS` behavior unchanged. No change to `SpeakerError`, `PersonaNotFoundError`. |
 | **Naming** | Module `heckler/locale.py`. Env `HECKLER_LOCALE`. Config fields `locale`, `kokoro_lang_code` (retain `whisper_language`). Persona key `[voice].locale`. Decision logs: `.dev/decision-logs/locale-lang-propagation-T1.md`, `.dev/decision-logs/locale-lang-propagation-T4.md`. |
 | **Logging** | Optional `logger.info` on `load_models` when persona locale differs from base `self._config.locale` — **out of scope** (YAGNI). No new structured log fields required. |
-| **Tests** | **pytest** under `tests/`. New `tests/test_locale.py` (T1). Extend `tests/test_config.py`, `tests/test_speaker.py`, `tests/test_persona.py`, `tests/test_controller.py`. Default run: `pytest tests/test_locale.py tests/test_config.py tests/test_speaker.py tests/test_persona.py tests/test_controller.py -q` (no GPU/network). |
-| **CLI surface** | N/A — no new argparse flags in v1. Existing `--mode`, `--session-name` unchanged. |
+| **Tests** | **pytest** under `tests/`. v1.0 modules per T1–T5. **Amendment verification (T6–T8):** `pytest tests/test_locale.py tests/test_config.py tests/test_speaker.py tests/test_persona.py tests/test_controller.py tests/test_pipeline.py tests/test_gui.py -q` (no GPU/network). |
+| **CLI surface** | N/A — no new argparse flags. Existing `--persona`, `--mode`, `--session-name` unchanged. |
+| **Entry-point integration** *(amendment v1.2.0 — **T6**, **T7**)* | **`heckler/pipeline.py` `main()` (T6):** After resolving `persona_name = args.persona or config.persona_name`, call `controller.load_models(..., mode=mode, persona_name=persona_name if mode == "persona" else None)` so heavy models match the persona passed to `start()`. **Falsifier:** `tests/test_pipeline.py` — mock/capture `load_models` kwargs or `Transcriber` config for persona with `[voice].locale = "es"` vs base `en`. **`heckler/gui/app.py` `ModelLoadThread` (T7):** Pass `persona_name=config.persona_name` and `mode=config.mode` into `load_models` when `config.mode == "persona"` (matches combo default from `_populate_personas` before `start()`). **Falsifier:** `tests/test_gui.py` asserts `load_models(..., persona_name=..., mode=...)`. **Out of scope:** Rebuild heavy models on `swap_persona` or persona-combo change while running (Flag 2 unchanged). |
 
 **Decision log paths:**
 
 - T1 (architectural): `.dev/decision-logs/locale-lang-propagation-T1.md`
 - T4 (architectural): `.dev/decision-logs/locale-lang-propagation-T4.md`
+- T7 (standard): `.dev/decision-logs/locale-lang-propagation-T7.md` *(amendment)*
 
 ---
 
@@ -74,15 +76,22 @@ graph LR
     T3["T3: persona locale mapping"]
     T4["T4: controller load_models persona bake"]
     T5["T5: docs + tracked plan bundle"]
+    T6["T6: CLI load_models persona_name"]
+    T7["T7: GUI load_models persona_name"]
+    T8["T8: plan §8 + audit narrative"]
 
     T1 --> T2
     T1 --> T3
     T2 --> T4
     T3 --> T4
     T4 --> T5
+    T5 --> T6
+    T5 --> T7
+    T6 --> T8
+    T7 --> T8
 ```
 
-**Parallel groups:** `{T2, T3}` may run in parallel after **T1** completes.
+**Parallel groups:** `{T2, T3}` after **T1**; `{T6, T7}` after **T5** (amendment wave).
 
 **Soft dependencies:** None.
 
@@ -209,15 +218,175 @@ graph LR
 | T3 | `.dev/plans/locale-lang-propagation/packets/T3.md` |
 | T4 | `.dev/plans/locale-lang-propagation/packets/T4.md` |
 | T5 | `.dev/plans/locale-lang-propagation/packets/T5.md` |
+| T6 | `.dev/plans/locale-lang-propagation/packets/T6.md` |
+| T7 | `.dev/plans/locale-lang-propagation/packets/T7.md` |
+| T8 | `.dev/plans/locale-lang-propagation/packets/T8.md` |
 
 ---
 
 ## §7 Amendment subtasks
 
-None (plan v1.0 draft).
+*Triggered by audit `.dev/audits/2026-05-22-locale-lang-propagation.md` revision 1 (**fail**). Closes **FIND-04**, **FIND-05**, **FIND-06**; **FIND-02/03** via **T8** plan commit.*
+
+```mermaid
+graph LR
+    T6["T6: CLI pipeline load_models"]
+    T7["T7: GUI ModelLoadThread"]
+    T8["T8: plan §8 + audit cross-link"]
+
+    T6 --> T8
+    T7 --> T8
+```
+
+**Parallel groups:** `{T6, T7}`.
+
+### T6 — CLI: pass `persona_name` into `load_models` + integration test
+
+| Field | Content |
+|-------|---------|
+| **ID** | T6 |
+| **Scope** | Wire `heckler/pipeline.py` `main()` so `load_models` receives the same `persona_name` used by `start()` when `mode == "persona"`. Add falsifying test mirroring audit scenario A4. |
+| **Files to touch** | `heckler/pipeline.py`, `tests/test_pipeline.py` |
+| **Contract bindings** | §2 Entry-point integration (T6), §2 Tests |
+| **Inputs** | T4 (controller `load_models(persona_name=...)` landed @ `093ce56f`) |
+| **Outputs** | CLI wiring; pipeline test; optional one-line README “headless path” clarification if still ambiguous |
+| **Kill criteria** | (1) Halt if `load_models` still omits `persona_name` on persona-mode `main()` path. (2) Halt if new CLI flags added. (3) Halt if test only mocks `start()` but not `load_models` persona propagation. (4) Halt if transcribe mode passes non-None `persona_name` without plan amendment. |
+| **Log tier** | `standard` |
+| **Risks & mitigations** | `PersonaNotFoundError` at load vs start — acceptable; load may fail earlier (document in test). |
+
+### T7 — GUI: pass `persona_name` + `mode` into `load_models` + test
+
+| Field | Content |
+|-------|---------|
+| **ID** | T7 |
+| **Scope** | Extend `ModelLoadThread` to call `load_models(on_progress=..., mode=..., persona_name=...)` using `HecklerConfig` defaults (persona mode: `config.persona_name`; transcribe: `persona_name=None`). Update `tests/test_gui.py` assertion. Short decision log. |
+| **Files to touch** | `heckler/gui/app.py`, `tests/test_gui.py`, `.dev/decision-logs/locale-lang-propagation-T7.md` (new) |
+| **Contract bindings** | §2 Entry-point integration (T7), §2 Tests |
+| **Inputs** | T4, T5 (GUI loads before `start()` documented) |
+| **Outputs** | GUI wiring; gui test; decision log |
+| **Kill criteria** | (1) Halt if FIND-05 unresolved: `ModelLoadThread` still calls `load_models()` with no `persona_name` in persona mode. (2) Halt if executor adds locale picker UI (plan non-goal). (3) Halt if `swap_persona` rebuilds Transcriber/Speaker. (4) Halt if persona-combo change while running triggers reload without plan amendment. |
+| **Log tier** | `standard` |
+| **Risks & mitigations** | Combo disabled until running — startup `config.persona_name` matches pre-start combo index; document in T7 log. |
+
+### T8 — Plan §8 remediation + audit cross-link (narrative)
+
+| Field | Content |
+|-------|---------|
+| **ID** | T8 |
+| **Scope** | Commit plan v1.2.0 (this file + packets T6–T8); correct §8.1 hygiene, §8.4 Surface 1 disposition, §8.6 audit cross-link; supersede v1.1.0 “safe for audit” execution review. No runtime code. |
+| **Files to touch** | `.dev/plans/locale-lang-propagation/plan.md`, `.dev/plans/locale-lang-propagation/packets/T6.md`, `T7.md`, `T8.md`, `.dev/audits/2026-05-22-locale-lang-propagation.md` (optional status footnote only if project convention allows) |
+| **Contract bindings** | §7 amendment DoD (narrative back-annotate) |
+| **Inputs** | T6, T7 (landed); audit FIND-02/03/06 |
+| **Outputs** | Tracked plan v1.2.0 with valid §8 at amendment SHA |
+| **Kill criteria** | (1) Halt if §8.4 still marks Surface 1 **closed** before T6/T7 land. (2) Halt if §8.1 claims “transcripts only” while plan.md unstaged. (3) Halt if §8.6 absent after amendment. |
+| **Log tier** | `standard` |
+| **Risks & mitigations** | T8 should land in same commit as T6/T7 or immediately after so §8.2 `git show` resolves. |
 
 ---
 
 ## §8 Auditor handoff
 
-*Pending plan execution and **Complete** banner — populate §8.1–§8.6 per orchestrator-planning v0.6 when T1–T5 land.*
+### §8.1 Completion snapshot
+
+| Field | Value |
+|-------|-------|
+| **Handoff tree SHA** | `__T8_CLOSURE_SHA__` (T8 — plan §8 + audit tracked; code chain `d0ce6d0` T5 → `344ca19d` T7 → `4739b325` T6) |
+| **Verification command** | `pytest tests/test_locale.py tests/test_config.py tests/test_speaker.py tests/test_persona.py tests/test_controller.py tests/test_pipeline.py tests/test_gui.py -q` |
+| **Checkout** | `git checkout __T8_CLOSURE_SHA__` — `plan.md` §8.1–§8.6 and `.dev/audits/2026-05-22-locale-lang-propagation.md` resolve in-tree at closure SHA (remediates FIND-02/03) |
+| **Result** | **146 passed** in 4.03s, exit code **0** |
+| **Prior SHA** | `d0ce6d0ee22b83aa988c1bfbeca2b5d5fffc38f8` (v1.1.0 — audit **fail** @ `.dev/audits/2026-05-22-locale-lang-propagation.md`) |
+| **Environment** | Windows, project venv (implicit in local run) |
+
+### §8.2 Artifact chain
+
+| Artifact | Path | `git show __T8_CLOSURE_SHA__:<path>` |
+|----------|------|--------------------------------------|
+| Context map | `.dev/plans/locale-lang-propagation/context-map.md` | OK — scout SHA `56c3748` (stale vs handoff; scope and coupling surfaces still valid) |
+| Plan | `.dev/plans/locale-lang-propagation/plan.md` | OK — v1.2.0 §8.1–§8.6 at closure SHA |
+| Packet T1–T5 | `.dev/plans/locale-lang-propagation/packets/T1.md` … `T5.md` | OK |
+| Packet T6–T8 | `.dev/plans/locale-lang-propagation/packets/T6.md` … `T8.md` | OK (amendment wave) |
+| Audit | `.dev/audits/2026-05-22-locale-lang-propagation.md` | OK — rev 1 fail; §8.6 back-annotates remediation |
+| Decision log T1 | `.dev/decision-logs/locale-lang-propagation-T1.md` | OK |
+| Decision log T4 | `.dev/decision-logs/locale-lang-propagation-T4.md` | OK |
+| Decision log T7 | `.dev/decision-logs/locale-lang-propagation-T7.md` | OK |
+| Changelog | `CHANGELOG.MD` (locale-lang-propagation section) | OK — T1–T8 entries |
+
+### §8.3 §2 evidence (landed)
+
+| §2 row | Shipped artifact | Proof |
+|--------|------------------|-------|
+| **Types — `heckler/locale.py`** | `heckler/locale.py:3-33` (`UnsupportedLocaleError`, `LocaleProfile`, `SUPPORTED_LOCALES`, `normalize_locale`, `resolve_locale`) | `tests/test_locale.py` (`test_resolve_locale_supported_keys`, `test_resolve_locale_unknown_raises_not_english_fallback`, `test_supported_locales_includes_en_and_es`) |
+| **Types — `HecklerConfig.locale` / `kokoro_lang_code`** | `heckler/config.py:21-23` | `test_heckler_config_locale_defaults_resolved`, `test_apply_resolved_locale_*` |
+| **Types — `apply_resolved_locale`** | `heckler/config.py:51-57` | `test_apply_resolved_locale_sets_derived_fields`, `test_apply_resolved_locale_en_gb_uses_british_kokoro_code` |
+| **Types — `load_config` + `HECKLER_LOCALE`** | `heckler/config.py:74-75`, `94` | `test_load_config_heckler_locale_env_override`, `test_load_config_heckler_locale_whitespace_falls_back_to_en`, `test_load_config_heckler_locale_unknown_raises` |
+| **Types — `Speaker` / `KPipeline(lang_code=...)`** | `heckler/speaker.py:35` | `test_init_uses_config_kokoro_lang_code_*`, `test_init_passes_resolved_kokoro_lang_code_to_pipeline` (parametrize `en`/`en-gb`/`es`) |
+| **Types — `transcriber` (unchanged)** | `heckler/transcriber.py` uses `self._config.whisper_language` | `tests/test_transcriber.py` (`language` kwarg assertion) |
+| **Types — persona `[voice].locale`** | `heckler/persona.py:32`, `129` | `test_load_persona_flattens_voice_locale`, `test_apply_persona_overrides_resolves_spanish_locale`, `test_apply_persona_overrides_rejects_unknown_locale` |
+| **Types — `load_models(persona_name=...)`** | `heckler/controller.py:107-141`, `294-299` | `test_load_models_persona_name_bakes_spanish_locale`, `test_load_models_without_persona_resolves_base_locale` |
+| **Types — `swap_persona` no STT/TTS rebuild** | `heckler/controller.py:256-276` (docstring; Reactor-only) | `test_swap_persona_does_not_change_transcriber_whisper_language` |
+| **Error envelope** | `UnsupportedLocaleError` at resolve/apply/load | `test_resolve_locale_unknown_raises_*`, `test_load_config_heckler_locale_unknown_raises`, persona unknown-locale test |
+| **Naming** | `HECKLER_LOCALE`, `locale`, `kokoro_lang_code`, decision log paths | Grep + `README.md`, `.env.example`, `persona_builder` SKILL |
+| **Logging** | N/A (no new fields) | — |
+| **Tests** | Seven modules per §2 (amendment) | §8.1 run: **146 passed** |
+| **CLI surface** | N/A | No new flags in `heckler/pipeline.py` |
+| **Entry-point — CLI (T6)** | `heckler/pipeline.py:374-377` | `tests/test_pipeline.py` — `load_models` receives `persona_name` on persona path |
+| **Entry-point — GUI (T7)** | `heckler/gui/app.py` — `ModelLoadThread` | `tests/test_gui.py` — `load_models` kwargs `mode` + `persona_name` |
+
+**Landed (docs, T5):** `README.md` multilingual positioning + locale table; `.env.example` `HECKLER_LOCALE`; `CHANGELOG.MD` locale-lang-propagation section; `.cursor/skills/persona_builder/SKILL.md` `[voice].locale` row.
+
+**Deferred (documented, non-blocking):** No test that a hypothetical `WHISPER_LANGUAGE` env is ignored (`locale-lang-propagation-T1.md`); no test that second `load_models(persona_name=...)` replaces an already-loaded transcriber (`locale-lang-propagation-T4.md`); no pytest sync of README locale list vs `SUPPORTED_LOCALES` (`CHANGELOG.MD` T5 note).
+
+### §8.4 §5 disposition
+
+| §5.2 / §5.4 item | Status | Evidence |
+|------------------|--------|----------|
+| Unified locale → Whisper + Kokoro (§5.2) | **closed** | `SUPPORTED_LOCALES` + `apply_resolved_locale`; speaker/transcriber tests |
+| Kokoro accepts `a`/`b`/`e` (§5.2) | **closed** | `test_init_passes_resolved_kokoro_lang_code_to_pipeline` |
+| `apply_resolved_locale` after persona merge (§5.2) | **closed** | `apply_persona_overrides` → `apply_resolved_locale` at `persona.py:129` |
+| Heavy models snapshot at `load_models` (§5.2) | **closed** | `_heavy_model_config` + controller bake tests |
+| `swap_persona` does not rebuild transcriber (§5.2) | **closed** | Implementation + `test_swap_persona_does_not_change_transcriber_whisper_language` |
+| `whisper_language` not env-direct (§5.2) | **closed** | Only `HECKLER_LOCALE` in `load_config`; no `WHISPER_LANGUAGE` wiring |
+| LLM register prompt-only (§5.2) | **closed** | No Reactor/config LLM-locale field; §1 non-goals honored |
+| Transcriber base vs merged cfg (§5.4) | **closed** | T6 `pipeline.py` + T7 `gui/app.py` pass `persona_name` into `load_models`; falsifiers in `test_pipeline.py` / `test_gui.py` (FIND-04/05/06 remediated) |
+| Speaker hard-coded `lang_code="a"` (§5.4) | **closed** | `speaker.py:35` uses `config.kokoro_lang_code` |
+| `load_config` skipped language (§5.4) | **closed** | `HECKLER_LOCALE` + `apply_resolved_locale` at end of `load_config` |
+| `test_speaker` American-English-only assert (§5.4) | **closed** | Parametrized `test_init_passes_resolved_kokoro_lang_code_to_pipeline` |
+| `test_controller` swap mocks hide transcriber config (§5.4, suspected) | **closed** | Explicit `Transcriber._config.whisper_language` assertion in T4 test |
+| `prompts/heckler` lacks locale key (§5.4) | **treat-as-prediction** | Shipped bundle still English-default; operators opt in via TOML — informational |
+| README English-only (§5.4) | **closed** | `README.md` L3 multilingual + locale table (T5) |
+
+### §8.5 Cold-read seeds
+
+Recommended narrative-blind Phase 0 read order:
+
+1. `heckler/locale.py` — `SUPPORTED_LOCALES` and `resolve_locale` (contract anchor)
+2. `heckler/config.py` — `apply_resolved_locale`, `load_config` + `HECKLER_LOCALE`
+3. `heckler/controller.py` — `load_models`, `_heavy_model_config`, `swap_persona` docstrings
+4. `heckler/speaker.py` — `KPipeline(lang_code=config.kokoro_lang_code)`
+5. `tests/test_controller.py` — `test_load_models_persona_name_bakes_spanish_locale`, `test_swap_persona_does_not_change_transcriber_whisper_language`
+
+### §8.6 Audit remediation cross-link
+
+| Audit | Finding IDs | Amendment | Packet(s) | §2 / §8 back-annotate |
+|-------|-------------|-----------|-----------|------------------------|
+| `.dev/audits/2026-05-22-locale-lang-propagation.md` rev 1 | **FIND-04** CLI Surface 1 | Wire `persona_name` in `pipeline.py` `load_models` | **T6** @ `4739b325` | **remediated** — §2 Entry-point integration; §8.4 Surface 1 **closed** |
+| Same | **FIND-05** GUI Surface 1 | Wire `persona_name` + `mode` in `ModelLoadThread` | **T7** @ `344ca19d` | **remediated** — same |
+| Same | **FIND-06** §8.4 overstated | Correct disposition + execution review | **T8** | **remediated** — §8.4 row; v1.1.0 execution review superseded |
+| Same | **FIND-02/03** plan §8 not in SHA / hygiene | Commit plan v1.2.0 at closure SHA | **T8** | **remediated** — §8.1–§8.2 resolve via `git show __T8_CLOSURE_SHA__:plan.md` |
+
+**Accepted deferrals (no amendment):** FIND-07 (`WHISPER_LANGUAGE` ignore test), FIND-08 (second `load_models` replace test), FIND-09 (README↔`SUPPORTED_LOCALES` pytest), FIND-01 (context-map stale — informational).
+
+---
+
+## Execution review (orchestrator)
+
+**v1.1.0 pre-audit verdict (superseded):** Core resolver, config, Speaker, persona merge, and controller API matched §2; **audit failed** on production entry points (FIND-04/05/06) and plan §8 hygiene (FIND-02/03).
+
+**v1.2.0 amendment verdict:** Surface 1 closed at `pipeline.py` and `gui/app.py` without changing Flag 2 hot-swap semantics. Amendment verification **146 passed** (§8.1). Re-audit recommended at `__T8_CLOSURE_SHA__` against `.dev/audits/2026-05-22-locale-lang-propagation.md` rev 1 findings.
+
+| Subtask | Assessment |
+|---------|------------|
+| **T1–T5** | Landed @ `d0ce6d0` |
+| **T6** | Landed @ `4739b325` — CLI `load_models(persona_name=...)` |
+| **T7** | Landed @ `344ca19d` — GUI `ModelLoadThread` wiring |
+| **T8** | Landed @ `__T8_CLOSURE_SHA__` — plan §8 + audit cross-link committed |

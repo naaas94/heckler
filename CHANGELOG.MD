@@ -18,6 +18,8 @@ Plan: unified `HecklerConfig.locale` propagates to Whisper `whisper_language` an
 
 - T7 (GUI load_models persona wiring): **`ModelLoadThread`** accepts **`HecklerConfig`** and passes **`mode`** and **`persona_name`** (persona mode only) into **`load_models`**, closing FIND-05 so persona **`[voice].locale`** bakes at GUI startup. Extended **`tests/test_gui.py`** with kwargs falsifiers; transcribe mode asserts **`persona_name=None`**. **Rationale:** GUI previously loaded heavy models from base config only. **Decision log:** `.dev/decision-logs/locale-lang-propagation-T7.md`. **Deferred (adversarial §2.1):** no end-to-end GUI test that Spanish persona TOML changes Whisper language at startup — controller bake tests cover merge semantics.
 
+- T8 (Plan v1.2.0 closure and audit cross-link): Committed **`plan.md`** §8.1–§8.6 at closure SHA, packets **T6–T8**, audit **`.dev/audits/2026-05-22-locale-lang-propagation.md`**; §8.4 Surface 1 **closed** with T6/T7 evidence; execution review reflects amendment pass path (**146** pytest). **Rationale:** v1.1.0 audit failed on entry-point wiring and unstaged §8 (FIND-02/03/04/05/06). **Deferred (adversarial §2.1):** no automated check that **`git show <SHA>:plan.md`** contains §8.6 — manual **`git show`** at handoff SHA is operator discipline.
+
 ## capture-mic-gate-during-play — 2026-05-22
 
 Plan: capture-layer Rule 1 while `Speaker.is_playing` is set — discard VAD segment formation during TTS/playback/tail, reset `VADIterator` on unmute; retain emit-time skip as second defense. Full decomposition: `.dev/plans/capture-mic-gate-during-play/plan.md`.
