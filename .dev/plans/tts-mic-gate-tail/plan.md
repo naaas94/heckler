@@ -4,7 +4,7 @@
 **Plan name:** `tts-mic-gate-tail`  
 **Skill:** orchestrator-planning v0.6  
 **Date:** 2026-05-21  
-**Status:** Planning complete — execution pending (§8 auditor handoff not populated until *Complete*)
+**Status:** Complete (v1.0 — §8 auditor handoff populated 2026-05-21)
 
 ---
 
@@ -15,7 +15,7 @@
 - **Scope-area labels flagged:** Flag 1 (`config`, `speaker` — tail configurable vs constant), Flag 2 (`speaker`, `tests` — tail on error paths), Flag 3 (`tests` — post-play hold assertion), Flag 4 (`speaker`, `UX` — default ms tradeoff)
 - **Skill version + commit SHA:** pre-plan-exploration v0.2 @ `58f10f132078691a70cc0ae70a5304816fce1f25` (matches `git rev-parse HEAD` at planning time; working tree dirty with out-of-scope `next_steps.md`)
 
-**Binding-artifact note:** `context-map.md` and this plan are **not** in the git object graph at the planning SHA (`git ls-files` empty). Executors may proceed; **§8.2 is invalid** until the plan bundle is committed with the implementation (T3 Outputs).
+**Binding-artifact note (resolved at execution):** Plan bundle and decision log tracked from prep commit `ac82a086448b34ad30b13a8c156ec52030406d64`; implementation landed `abbaa65f` (T1) → `25718245` (T2) → `3cfc2052` (T3). Context-map scout SHA `58f10f1` remains **stale** vs implementation HEAD — see §8.2 staleness note.
 
 **Flag resolutions applied before planning:**
 
@@ -176,8 +176,83 @@ None (v1.0 initial plan).
 
 ## §8 Auditor handoff
 
-**Not produced** — populate when execution marks plan *Complete* (clean-tree verification, §8.2 artifact chain, §5 disposition).
+### §8.1 Completion snapshot
 
-**Planned verification command:** `pytest tests/test_config.py tests/test_speaker.py -q`
+| Field | Value |
+|-------|--------|
+| **Tree SHA** | `3cfc2052c26928764cbbf674be78d593bbccee7d` (T3: docs + plan bundle; parent chain T1 `abbaa65f`, T2 `25718245`) |
+| **Working tree at verification** | Clean (no unstaged implementation files) |
+| **Verification command** | `pytest tests/test_config.py tests/test_speaker.py -q` |
+| **Result** | **29 passed** in 2.22s, exit code **0** (Windows, local run 2026-05-21) |
 
-**Planned §8.5 cold-read seeds:** `heckler/speaker.py`, `heckler/audio_capture.py`, `heckler/config.py`, `tests/test_speaker.py`
+**Execution log summary (from `CHANGELOG.MD` + decision log):**
+
+- **T1:** `HecklerConfig.tts_gate_tail_ms` default 400; `load_config()` maps `TTS_GATE_TAIL_MS` via bare `int(os.getenv(...))`; config tests cover default, override, zero-disable, invalid env `ValueError`.
+- **T2:** `Speaker.speak` sleeps `tail_ms / 1000.0` after successful `sd.play`, then `finally` clears; error paths skip tail; `tts_latency_ms` synthesis-only. Decision log: `.dev/decision-logs/tts-mic-gate-tail-T2.md`.
+- **T3:** `heckler_seed.md`, `README.md`, `.env.example`, `CHANGELOG.MD` aligned with §2 naming; plan bundle tracked under `.dev/plans/tts-mic-gate-tail/`.
+
+### §8.2 Artifact chain
+
+Read order for narrative-blind audit:
+
+| # | Path | `git show HEAD:<path>` @ §8.1 SHA | Notes |
+|---|------|-----------------------------------|--------|
+| 1 | `.dev/plans/tts-mic-gate-tail/context-map.md` | OK | Scout @ `58f10f1` — **stale** for line-level `speaker.py`/`config.py` rows; §0 flag resolutions and §File map roles still valid |
+| 2 | `.dev/plans/tts-mic-gate-tail/plan.md` | OK | §8 populated post-T3; if this §8 block is uncommitted locally, use working-tree `plan.md` |
+| 3 | `.dev/plans/tts-mic-gate-tail/packets/T1.md` | OK | |
+| 4 | `.dev/plans/tts-mic-gate-tail/packets/T2.md` | OK | |
+| 5 | `.dev/plans/tts-mic-gate-tail/packets/T3.md` | OK | |
+| 6 | `.dev/decision-logs/tts-mic-gate-tail-T2.md` | OK | Architectural authority for tail placement |
+| 7 | `CHANGELOG.MD` (section `tts-mic-gate-tail`) | OK | Tiered executor narrative |
+
+No §7 amendments. No audit file consumed.
+
+### §8.3 §2 evidence
+
+| §2 row | Shipped artifact | Proving test / check |
+|--------|------------------|----------------------|
+| **Types / `tts_gate_tail_ms`** | `heckler/config.py:HecklerConfig.tts_gate_tail_ms` (default `400`) | `tests/test_config.py::test_heckler_config_tts_gate_tail_ms_default` |
+| **Types / `load_config` + `TTS_GATE_TAIL_MS`** | `heckler/config.py:load_config` → `tts_gate_tail_ms=int(os.getenv("TTS_GATE_TAIL_MS", "400"))` | `test_load_config_tts_gate_tail_ms_env_override`, `test_load_config_tts_gate_tail_ms_zero_disables_tail`, `test_load_config_tts_gate_tail_ms_invalid_raises` |
+| **Types / tail in `Speaker.speak`** | `heckler/speaker.py:Speaker.speak` lines 69–75 (`sd.play` → `tail_ms > 0` → `time.sleep` → `finally: clear`) | `test_speak_holds_mic_gate_during_post_playback_tail`, `test_speak_zero_tail_skips_post_playback_sleep` |
+| **Types / error paths no tail** | Synthesis `except` clears before play; play `except` skips sleep body | `test_synthesis_failure_skips_post_playback_tail_sleep`, `test_play_failure_skips_post_playback_tail_sleep`, `test_play_failure_still_clears_event` |
+| **Types / `tts_latency_ms` excludes tail** | `perf_counter` bracket ends before playback block | `test_speak_tts_latency_excludes_post_playback_tail` |
+| **Types / `AudioCapture` unchanged** | No edits to `heckler/audio_capture.py` | `tests/test_audio_capture.py` unchanged; grep `is_playing` in capture unchanged |
+| **Error envelope** | `SpeakerError` on synthesis; play exceptions propagate after `clear` | Existing + tail-skip tests above |
+| **Naming** | `tts_gate_tail_ms`, `TTS_GATE_TAIL_MS`, `.dev/decision-logs/tts-mic-gate-tail-T2.md` | README row + `.env.example` comment |
+| **Logging** | N/A (no new fields) | — |
+| **Tests** | `tests/test_config.py`, `tests/test_speaker.py` extensions | **29 passed** @ §8.1 SHA |
+| **CLI surface** | N/A | — |
+
+**Landed supersession:** `heckler_seed.md` mic-gate steps + Coupling Surface 2 (`speaker.is_playing` contract) describe post-playback acoustic tail; supersedes T8 / prior “cleared when digital playback ends” wording.
+
+### §8.4 §5 disposition
+
+**§5.2 Load-bearing assumptions:**
+
+1. (`AudioCapture` gates on `is_set()` only` → extending hold in `Speaker`) — **closed.** `test_speak_holds_mic_gate_during_post_playback_tail` asserts `is_set()` during mocked sleep; no `audio_capture.py` diff.
+
+2. (`Pacing cooldown at speak intent, not playback end`) — **closed.** `heckler/pipeline.py:_execute_spoken_reply` still `record_output()` then `speak()` (grep unchanged at §8.1 SHA); no pipeline edits in T1–T3 commits.
+
+3. (`400 ms default adequate for typical bleed`) — **treat-as-prediction.** Code and docs ship default 400; echo suppression on hardware requires operator validation (logs motivated 300–500 ms band). Env tunable via `TTS_GATE_TAIL_MS`.
+
+4. (`TTS_GATE_TAIL_MS in T1 before T2 reads config`) — **closed.** T1 commit precedes T2; `Speaker` reads `self._config.tts_gate_tail_ms` with no hardcoded ms.
+
+**§5.4 Hidden couplings:**
+
+1. (`test_speak_clears_event_after_successful_playback` immediate clear) — **closed.** Default fixture `dataclasses.replace(HecklerConfig(), tts_gate_tail_ms=0)`; `test_speak_clears_event_after_successful_playback` uses zero tail.
+
+2. (`heckler_seed.md` Coupling Surface 2) — **closed.** T3 updated seed steps and surface-2 contract string.
+
+3. (`Persona vs transcribe is_playing`) — **closed (no code change).** `controller.py` wiring untouched in plan commits; transcribe bare `Event` unchanged per non-goals.
+
+4. (`Monkeypatched sleep vs wall clock`) — **closed.** `test_speak_holds_mic_gate_during_post_playback_tail` patches `speaker_mod.time.sleep`, records `gate_during_tail == [True]` and `sleep_seconds == [0.4]` for 400 ms config — disproves suspected flake.
+
+**T3 deferred (non-blocking):** CHANGELOG records no pytest for README/`heckler_seed.md` prose sync — **open**, audit/planning discipline only; does not block merge.
+
+### §8.5 Cold-read seeds
+
+1. `heckler/speaker.py` — `speak()` gate lifecycle and tail sleep placement (primary contract surface).
+2. `heckler/config.py` — `tts_gate_tail_ms` field and `load_config()` env wiring.
+3. `tests/test_speaker.py` — tail-hold, zero-tail, error-path, latency falsifiers (lines ~202–300).
+4. `heckler/audio_capture.py` — `_emit_audio_segment` `is_playing` check (confirm no drift).
+5. `.dev/decision-logs/tts-mic-gate-tail-T2.md` — supersession and rejected alternatives.
