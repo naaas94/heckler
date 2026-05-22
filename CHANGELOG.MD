@@ -16,6 +16,8 @@ Plan: reload Whisper/Kokoro when persona or locale override changes `(whisper_la
 
 - T7 (Scenario matrix tests and operator docs): Replaced **`test_swap_persona_does_not_change_transcriber_whisper_language`** with same-sig / cross-sig matrix (**S2/S4/S13**) and scenario coverage **S1–S14** (mock-level) across **`tests/test_controller.py`**, **`tests/test_gui.py`**, **`tests/test_pipeline.py`**, **`tests/test_speaker.py`**; verified **`prompts/heckler_arg/persona.toml`** (`ef_dora` / `es`). **`README.md`** documents persona locale, conditional reload, GUI override, and CLI limits; **`.cursor/skills/persona_builder/SKILL.md`** adds per-locale Kokoro voice table. **Rationale:** CI and docs must encode conditional reload, not the retired “swap never rebuilds” contract. **Deferred (adversarial §2.1):** no automated test for full GUI boot with real Whisper/Kokoro load (**S1–S3** remain manual per spec §20).
 
+- T8 (Decision logs and audit addendum): Finalized **`.dev/decision-logs/persona-speech-reload-T2.md`** and **`persona-speech-reload-T4.md`**; verified supersession banners on **`locale-lang-propagation-T4.md`** / **T7**; appended FIND-A6 closure addendum to **`.dev/audits/2026-05-22-locale-lang-propagation.md`** citing **`test_speech_stack_cross_locale_reload_s2`** and GUI apply-path tests.
+
 ## locale-lang-propagation — 2026-05-22
 
 Plan: unified `HecklerConfig.locale` propagates to Whisper `whisper_language` and Kokoro `kokoro_lang_code` via `heckler/locale.py`; operator entry `HECKLER_LOCALE` and persona `[voice].locale` (later subtasks). Full decomposition: `.dev/plans/locale-lang-propagation/plan.md`.

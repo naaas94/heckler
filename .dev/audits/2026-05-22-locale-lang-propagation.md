@@ -177,6 +177,23 @@ All revision 1 **major** findings (**FIND-02** through **FIND-06**) are **resolv
 
 ---
 
+## Addendum — persona-speech-reload (2026-05-22)
+
+**FIND-A6 status: CLOSED**
+
+Prior finding: `swap_persona` did not rebuild Transcriber/Speaker on cross-locale persona change, leaving STT/TTS in the wrong language after hot-swap.
+
+Closed by: `persona-speech-reload` plan, subtasks T2 + T5.
+
+Evidence:
+- `tests/test_controller.py::test_speech_stack_cross_locale_reload_s2` (S2)
+- `tests/test_gui.py::test_apply_persona_and_speech_cross_sig_auto_reloads`
+- `tests/test_gui.py::test_apply_persona_and_speech_ask_cancel_reverts` (S3)
+
+Operator contract: same-locale swap (e.g. `heckler` → `technician`, both en) remains instant. Cross-locale swap triggers stop/reload/start with ask dialog while running, auto on Start.
+
+---
+
 ## 12. Finding status vs prior revision (revision 1 → 2)
 
 | Prior ID | Prior severity | Prior type | Status | Evidence @ `24ca9bd8` |
