@@ -89,6 +89,12 @@ class HecklerMainWindow(QMainWindow):
         header.addWidget(self._persona_combo, stretch=1)
         root.addLayout(header)
 
+        speech_row = QHBoxLayout()
+        speech_row.addWidget(QLabel("Speech:"))
+        self._locale_combo = QComboBox()
+        speech_row.addWidget(self._locale_combo, stretch=1)
+        root.addLayout(speech_row)
+
         self._feed = QPlainTextEdit()
         self._feed.setReadOnly(True)
         self._feed.setPlaceholderText("Live transcript and reactions appear here.")
@@ -112,6 +118,7 @@ class HecklerMainWindow(QMainWindow):
         self.statusBar().showMessage("Loading models…")
 
         self._populate_personas()
+        self._populate_locale_combo()
         self._wire_mode_from_config()
         self._apply_models_ready(False)
 
@@ -149,6 +156,23 @@ class HecklerMainWindow(QMainWindow):
             self._persona_combo.setCurrentIndex(0)
         self._persona_combo.blockSignals(False)
 
+    def _populate_locale_combo(self) -> None:
+        from heckler.locale import supported_locale_labels
+
+        self._locale_combo.blockSignals(True)
+        self._locale_combo.clear()
+        self._locale_combo.addItem("From persona")
+        for slug in supported_locale_labels():
+            self._locale_combo.addItem(slug)
+        self._locale_combo.setCurrentIndex(0)
+        self._locale_combo.blockSignals(False)
+
+    def selected_locale_override(self) -> str | None:
+        text = self._locale_combo.currentText()
+        if text == "From persona" or not text:
+            return None
+        return text
+
     def _wire_mode_from_config(self) -> None:
         mode = (self._config.mode or "persona").strip().lower()
         if mode == "transcribe":
@@ -166,6 +190,10 @@ class HecklerMainWindow(QMainWindow):
         self._start_stop.setEnabled(ready)
         persona_mode = self._selected_mode() == "persona"
         self._persona_combo.setEnabled(ready and self._controller.is_running and persona_mode)
+        self._locale_combo.setEnabled(
+            ready and persona_mode and not getattr(self, "_reloading", False)
+        )
+        self._locale_combo.setVisible(persona_mode)
         self._export.setEnabled(ready and self._selected_mode() == "transcribe")
         self._start_stop.setText("Stop" if self._controller.is_running else "Start")
 
@@ -175,6 +203,7 @@ class HecklerMainWindow(QMainWindow):
         self._session_name.setEnabled(self._models_ready and self._selected_mode() == "transcribe")
         self._export.setEnabled(self._models_ready and self._selected_mode() == "transcribe")
         if not self._controller.is_running:
+            self._apply_models_ready(self._models_ready)
             return
         new_mode = self._selected_mode()
         try:
@@ -224,10 +253,27 @@ class HecklerMainWindow(QMainWindow):
         self._refresh_running_state()
 
     def _on_persona_changed(self, _name: str) -> None:
-        if not self._controller.is_running or self._controller.current_mode != "persona":
-            return
         name = self._persona_combo.currentText()
         if not name:
+            return
+        if not self._controller.is_running or self._controller.current_mode != "persona":
+            try:
+                from heckler.persona import load_persona
+
+                persona = load_persona(_prompts_root() / name)
+                locale = persona.config_overrides.get("locale")
+                self._locale_combo.blockSignals(True)
+                if locale:
+                    idx = self._locale_combo.findText(locale)
+                    self._locale_combo.setCurrentIndex(idx if idx >= 0 else 0)
+                else:
+                    self._locale_combo.setCurrentIndex(0)
+                self._locale_combo.blockSignals(False)
+            except PersonaNotFoundError:
+                logger.debug("Could not sync locale combo from persona %r", name)
+                self._locale_combo.blockSignals(True)
+                self._locale_combo.setCurrentIndex(0)
+                self._locale_combo.blockSignals(False)
             return
         try:
             self._controller.swap_persona(name)

@@ -20,7 +20,9 @@ from PyQt6.QtWidgets import QComboBox, QPlainTextEdit, QRadioButton
 from heckler.config import HecklerConfig
 from heckler.gui.app import ModelLoadThread
 from heckler.gui.main_window import HecklerMainWindow, SignalBridge
+from heckler.locale import SUPPORTED_LOCALES, supported_locale_labels
 from heckler.models import CommentType, ReactorResult
+from heckler.persona import Persona, PersonaNotFoundError
 
 
 def _stub_controller(**kwargs) -> MagicMock:
@@ -52,10 +54,105 @@ def test_persona_combo_populated(_mock_list, qtbot):
     ctrl = _stub_controller()
     w = HecklerMainWindow(cfg, ctrl)
     qtbot.addWidget(w)
-    combo = w.findChild(QComboBox)
-    assert combo is not None
-    names = [combo.itemText(i) for i in range(combo.count())]
+    names = [w._persona_combo.itemText(i) for i in range(w._persona_combo.count())]
     assert names == ["heckler", "test"]
+
+
+def test_locale_combo_populated(qtbot):
+    cfg = HecklerConfig()
+    w = HecklerMainWindow(cfg, _stub_controller())
+    qtbot.addWidget(w)
+    labels = [w._locale_combo.itemText(i) for i in range(w._locale_combo.count())]
+    assert labels == ["From persona", *supported_locale_labels()]
+
+
+def test_selected_locale_override_from_persona(qtbot):
+    cfg = HecklerConfig()
+    w = HecklerMainWindow(cfg, _stub_controller())
+    qtbot.addWidget(w)
+    w._locale_combo.setCurrentIndex(0)
+    assert w.selected_locale_override() is None
+
+
+def test_selected_locale_override_explicit(qtbot):
+    cfg = HecklerConfig()
+    w = HecklerMainWindow(cfg, _stub_controller())
+    qtbot.addWidget(w)
+    idx = w._locale_combo.findText("es")
+    assert idx >= 0
+    w._locale_combo.setCurrentIndex(idx)
+    assert w.selected_locale_override() == "es"
+
+
+def test_locale_combo_hidden_in_transcribe_mode(qtbot):
+    cfg = HecklerConfig()
+    w = HecklerMainWindow(cfg, _stub_controller())
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._radio_transcribe.setChecked(True)
+    w._apply_models_ready(True)
+    assert w._locale_combo.isVisible() is False
+    assert w._locale_combo.isEnabled() is False
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler_arg"])
+@patch(
+    "heckler.persona.load_persona",
+    return_value=Persona(
+        name="heckler_arg",
+        description="",
+        system_prompt="",
+        examples=[],
+        config_overrides={"locale": "es"},
+    ),
+)
+def test_locale_combo_syncs_from_persona_when_not_running(
+    _mock_load, _mock_list, qtbot
+):
+    cfg = HecklerConfig()
+    w = HecklerMainWindow(cfg, _stub_controller())
+    qtbot.addWidget(w)
+    w._on_persona_changed("heckler_arg")
+    assert w._locale_combo.currentText() == "es"
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["missing"])
+@patch(
+    "heckler.persona.load_persona",
+    side_effect=PersonaNotFoundError("missing"),
+)
+def test_locale_combo_defaults_on_persona_not_found(_mock_load, _mock_list, qtbot):
+    cfg = HecklerConfig()
+    w = HecklerMainWindow(cfg, _stub_controller())
+    qtbot.addWidget(w)
+    w._locale_combo.setCurrentIndex(w._locale_combo.findText("es"))
+    w._on_persona_changed("missing")
+    assert w._locale_combo.currentIndex() == 0
+    assert w.selected_locale_override() is None
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["weird"])
+@patch(
+    "heckler.persona.load_persona",
+    return_value=Persona(
+        name="weird",
+        description="",
+        system_prompt="",
+        examples=[],
+        config_overrides={"locale": "xx-unknown"},
+    ),
+)
+def test_locale_combo_unknown_persona_locale_resets_to_from_persona(
+    _mock_load, _mock_list, qtbot
+):
+    """Falsifier: TOML locale not in supported_locale_labels() must not leave a stale slug selected."""
+    cfg = HecklerConfig()
+    w = HecklerMainWindow(cfg, _stub_controller())
+    qtbot.addWidget(w)
+    w._locale_combo.setCurrentIndex(w._locale_combo.findText("es"))
+    w._on_persona_changed("weird")
+    assert w._locale_combo.currentIndex() == 0
+    assert set(supported_locale_labels()) == set(SUPPORTED_LOCALES.keys())
 
 
 def test_live_feed_is_read_only(qtbot):
