@@ -202,7 +202,7 @@ def test_main_transcribe_ensure_heavy_models_omits_persona_name(monkeypatch):
 
 
 def test_cli_persona_heckler_arg_calls_ensure_heavy_models(monkeypatch):
-    """``--persona heckler_arg`` routes locale-aware load through ``ensure_heavy_models``."""
+    """S12: ``--persona heckler_arg`` routes locale-aware load through ``ensure_heavy_models``."""
     cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler", locale="en")
     ensure_calls: list[dict] = []
 
@@ -233,6 +233,20 @@ def test_cli_persona_heckler_arg_calls_ensure_heavy_models(monkeypatch):
     assert ensure_calls[0]["persona_name"] == "heckler_arg"
     assert ensure_calls[0]["locale_override"] is None
     assert ensure_calls[0]["mode"] == "persona"
+
+
+def test_cli_heckler_arg_target_speech_stack_is_spanish_s12() -> None:
+    """S12 integration: heckler_arg persona resolves to es/e speech signature at load."""
+    from pathlib import Path
+
+    from heckler.locale import speech_stack_signature
+    from heckler.persona import apply_persona_overrides, load_persona
+
+    prompts_root = Path(__file__).resolve().parent.parent / "prompts"
+    persona = load_persona(prompts_root / "heckler_arg")
+    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler")
+    merged = apply_persona_overrides(cfg, persona)
+    assert speech_stack_signature(merged) == ("es", "e")
 
 
 def test_cli_transcribe_mode_ensure_heavy_models_no_speaker(monkeypatch):

@@ -560,3 +560,149 @@ def test_as_callbacks_emit_signals(qtbot):
     cb = bridge.as_callbacks()
     cb.on_transcript("x")
     qtbot.waitUntil(lambda: seen == ["x"], timeout=2000)
+
+
+# ---------------------------------------------------------------------------
+# T7 — persona-speech-reload scenario matrix (S1–S14, G4/G7/G8/S11)
+# ---------------------------------------------------------------------------
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler_arg"])
+def test_gui_boot_heckler_arg_start_targets_es_s1(_mock_list, qtbot):
+    """S1: GUI Start with heckler_arg selected uses Spanish speech-stack target."""
+    ctrl = _stub_controller(is_running=False)
+    ctrl.heavy_models_need_reload.return_value = True
+    ctrl.target_speech_config.return_value = HecklerConfig(
+        locale="es", whisper_language="es", kokoro_lang_code="e"
+    )
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    idx = w._persona_combo.findText("heckler_arg")
+    assert idx >= 0
+    w._persona_combo.setCurrentIndex(idx)
+    with patch.object(w, "_start_reload") as mock_reload:
+        w._on_start_stop()
+        mock_reload.assert_called_once()
+        assert mock_reload.call_args.kwargs["persona_name"] == "heckler_arg"
+        assert mock_reload.call_args.kwargs["locale_override"] is None
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler"])
+def test_start_locale_override_es_overrides_en_persona_s6(_mock_list, qtbot):
+    """S6: locale override es with English persona triggers reload to Spanish."""
+    ctrl = _stub_controller(is_running=False)
+    ctrl.heavy_models_need_reload.return_value = True
+    ctrl.target_speech_config.return_value = HecklerConfig(
+        locale="es", whisper_language="es", kokoro_lang_code="e"
+    )
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._locale_combo.setCurrentIndex(w._locale_combo.findText("es"))
+    with patch.object(w, "_start_reload") as mock_reload:
+        w._on_start_stop()
+        mock_reload.assert_called_once()
+        assert mock_reload.call_args.kwargs["locale_override"] == "es"
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler_arg"])
+def test_switch_mode_to_persona_passes_heckler_arg_s7(_mock_list, qtbot):
+    """S7: runtime transcribe → persona passes selected persona into switch_mode."""
+    ctrl = _stub_controller(is_running=True, current_mode="transcribe")
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._radio_persona.setChecked(True)
+    idx = w._persona_combo.findText("heckler_arg")
+    w._persona_combo.setCurrentIndex(idx)
+    w._on_mode_ui_toggled(True)
+    ctrl.switch_mode.assert_called_once_with(
+        "persona", persona_name="heckler_arg"
+    )
+
+
+def test_startup_race_persona_change_during_load_s8(qtbot):
+    """S8: ModelLoadThread reads persona_name_fn at run(), not at construction."""
+    ctrl = MagicMock()
+    ctrl.load_models.side_effect = lambda **kwargs: None
+    selected = {"name": "at-init"}
+
+    def persona_name_fn() -> str:
+        return selected["name"]
+
+    thread = ModelLoadThread(
+        ctrl,
+        mode="persona",
+        persona_name_fn=persona_name_fn,
+        locale_override_fn=lambda: None,
+    )
+    selected["name"] = "changed-before-run"
+    with qtbot.waitSignal(thread.finished_ok, timeout=5000):
+        thread.start()
+    assert ctrl.load_models.call_args.kwargs["persona_name"] == "changed-before-run"
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler", "heckler_arg"])
+def test_populate_personas_does_not_apply_reload_g7(_mock_list, qtbot):
+    """G7: populating persona combo must not invoke reload/apply (blockSignals)."""
+    ctrl = _stub_controller()
+    with patch.object(
+        HecklerMainWindow, "_apply_persona_and_speech"
+    ) as mock_apply:
+        w = HecklerMainWindow(HecklerConfig(), ctrl)
+        qtbot.addWidget(w)
+        mock_apply.assert_not_called()
+
+
+def test_reloading_disables_persona_combo_s11(qtbot):
+    """S11/G8: while _reloading, persona/locale combos are disabled (second change blocked)."""
+    w = HecklerMainWindow(HecklerConfig(), _stub_controller())
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._reloading = True
+    w._apply_models_ready(True)
+    assert w._persona_combo.isEnabled() is False
+    assert w._locale_combo.isEnabled() is False
+
+
+def test_start_stop_ignored_while_reloading_s11(qtbot):
+    """S11: Start/Stop handler is a no-op while reload is in progress."""
+    ctrl = _stub_controller(is_running=False)
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._reloading = True
+    w._on_start_stop()
+    ctrl.start.assert_not_called()
+    ctrl.stop.assert_not_called()
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler"])
+def test_apply_same_persona_no_reload_s13(_mock_list, qtbot):
+    """S13: re-selecting the running persona does not reload heavy models."""
+    ctrl = _stub_controller(
+        is_running=True, current_mode="persona", current_persona_name="heckler"
+    )
+    ctrl.heavy_models_need_reload.return_value = False
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._apply_persona_and_speech(
+        "heckler",
+        None,
+        running=True,
+        reload_policy=SpeechReloadPolicy.ask,
+        on_progress=lambda m: None,
+    )
+    ctrl.heavy_models_need_reload.assert_called()
+    ctrl.reload_speech_stack_for_persona.assert_not_called()
+    with patch.object(w, "_start_reload") as mock_reload:
+        w._apply_persona_and_speech(
+            "heckler",
+            None,
+            running=True,
+            reload_policy=SpeechReloadPolicy.ask,
+            on_progress=lambda m: None,
+        )
+        mock_reload.assert_not_called()

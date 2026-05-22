@@ -280,28 +280,20 @@ def test_load_models_without_persona_resolves_base_locale(monkeypatch):
     assert model_cfg.kokoro_lang_code == expected.kokoro_lang_code
 
 
-def test_swap_persona_does_not_change_transcriber_whisper_language(monkeypatch):
-    """Hot-swap updates Reactor only; Transcriber keeps load-time whisper_language."""
-    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
-    callbacks = _make_callbacks()
-
-    fake_en = _fake_persona("heckler")
-    fake_es = Persona(
-        name="es-host",
-        description="",
-        system_prompt="Spanish.",
-        examples=[],
-        config_overrides={"locale": "es"},
-    )
-    personas = {"heckler": fake_en, "es-host": fake_es}
-
+def _config_capturing_controller(
+    monkeypatch,
+    cfg: HecklerConfig,
+    personas: dict[str, Persona],
+) -> PipelineController:
+    """Controller with config-capturing Transcriber/Speaker and persona map."""
     _ConfigCapturingTranscriber.instances.clear()
+    _ConfigCapturingSpeaker.instances.clear()
     monkeypatch.setattr(
         "heckler.controller.Transcriber", _ConfigCapturingTranscriber
     )
     monkeypatch.setattr(
         "heckler.controller.Speaker",
-        lambda cfg: _ConfigCapturingSpeaker(cfg),
+        lambda c: _ConfigCapturingSpeaker(c),
     )
     monkeypatch.setattr("heckler.controller.AudioCapture", lambda *a, **kw: MagicMock())
     monkeypatch.setattr("heckler.controller.Reactor", lambda *a, **kw: MagicMock())
@@ -310,16 +302,200 @@ def test_swap_persona_does_not_change_transcriber_whisper_language(monkeypatch):
         lambda path: personas[path.name],
     )
     monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
+    return PipelineController(cfg, _make_callbacks())
 
-    ctrl = PipelineController(cfg, callbacks)
-    ctrl.load_models()
-    assert ctrl._transcriber is not None
+
+@pytest.mark.parametrize(
+    ("scenario", "to_persona", "expect_reload", "whisper_after_swap"),
+    [
+        ("S4_same_locale", "technician", False, "en"),
+        ("S13_reselect_same", "heckler", False, "en"),
+    ],
+)
+def test_speech_stack_swap_matrix_same_sig(
+    monkeypatch, scenario, to_persona, expect_reload, whisper_after_swap
+):
+    """S4/S13: same signature → hot-swap only; transcriber language unchanged."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    personas = {
+        "heckler": _fake_persona("heckler"),
+        "technician": _fake_persona("technician"),
+    }
+    ctrl = _config_capturing_controller(monkeypatch, cfg, personas)
+    ctrl.load_models(persona_name="heckler")
     assert ctrl._transcriber._config.whisper_language == "en"
 
     ctrl.start(mode="persona", persona_name="heckler")
-    ctrl.swap_persona("es-host")
+    assert ctrl.heavy_models_need_reload(persona_name=to_persona) is expect_reload
+    ctrl.swap_persona(to_persona)
 
+    assert ctrl._transcriber._config.whisper_language == whisper_after_swap
+    ctrl.stop()
+
+
+def test_speech_stack_cross_locale_reload_s2(monkeypatch):
+    """S2: cross-locale needs reload; swap alone does not update transcriber."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    personas = {
+        "heckler": _fake_persona("heckler"),
+        "heckler_arg": Persona(
+            name="heckler_arg",
+            description="",
+            system_prompt="Spanish.",
+            examples=[],
+            config_overrides={"locale": "es"},
+        ),
+    }
+    ctrl = _config_capturing_controller(monkeypatch, cfg, personas)
+    ctrl.load_models(persona_name="heckler")
+    ctrl.start(mode="persona", persona_name="heckler")
+
+    assert ctrl.heavy_models_need_reload(persona_name="heckler_arg") is True
+    ctrl.swap_persona("heckler_arg")
     assert ctrl._transcriber._config.whisper_language == "en"
+
+    ctrl.reload_speech_stack_for_persona(persona_name="heckler_arg")
+    assert ctrl._transcriber._config.whisper_language == "es"
+    assert ctrl._transcriber._config.kokoro_lang_code == "e"
+    ctrl.stop()
+
+
+def test_reselect_same_persona_no_reload_needed_s13(monkeypatch):
+    """S13: same persona + loaded signature → heavy_models_need_reload is False."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: _fake_persona("heckler"),
+    )
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda c: _ConfigCapturingSpeaker(c),
+    )
+
+    ctrl = PipelineController(cfg, _make_callbacks())
+    ctrl.load_models(persona_name="heckler")
+    assert ctrl.heavy_models_need_reload(persona_name="heckler") is False
+
+
+def test_heavy_models_need_reload_en_gb_persona_s5(monkeypatch):
+    """S5: persona with en-gb (kokoro b) triggers reload from default en (a)."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    gb_persona = Persona(
+        name="brit-host",
+        description="",
+        system_prompt="British.",
+        examples=[],
+        config_overrides={"locale": "en-gb"},
+    )
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: gb_persona,
+    )
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda c: _ConfigCapturingSpeaker(c),
+    )
+
+    ctrl = PipelineController(cfg, _make_callbacks())
+    ctrl.load_models()
+    assert ctrl.loaded_speech_stack() == ("en", "a")
+    target = ctrl.target_speech_config(persona_name="brit-host")
+    assert speech_stack_signature(target) == ("en", "b")
+    assert ctrl.heavy_models_need_reload(persona_name="brit-host") is True
+
+
+def test_target_speech_config_consistent_with_load_models(monkeypatch):
+    """G3: load_models and target_speech_config produce the same speech signature."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    es_persona = Persona(
+        name="es-host",
+        description="",
+        system_prompt="Spanish.",
+        examples=[],
+        config_overrides={"locale": "es"},
+    )
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: es_persona,
+    )
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda c: _ConfigCapturingSpeaker(c),
+    )
+
+    ctrl = PipelineController(cfg, _make_callbacks())
+    cases = [
+        (None, None),
+        ("es-host", None),
+        ("es-host", "en-gb"),
+    ]
+    for persona_name, locale_override in cases:
+        expected = ctrl.target_speech_config(
+            persona_name=persona_name, locale_override=locale_override
+        )
+        _ConfigCapturingTranscriber.instances.clear()
+        ctrl.load_models(
+            persona_name=persona_name, locale_override=locale_override
+        )
+        loaded = _ConfigCapturingTranscriber.instances[-1]._config
+        assert speech_stack_signature(loaded) == speech_stack_signature(expected)
+
+
+def test_switch_mode_to_persona_target_signature_s14(monkeypatch, tmp_path):
+    """S14: transcribe → persona switch loads heavy models for persona locale."""
+    db_path = tmp_path / "t.db"
+    cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
+    es_persona = Persona(
+        name="heckler_arg",
+        description="",
+        system_prompt="Spanish.",
+        examples=[],
+        config_overrides={"locale": "es"},
+    )
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: es_persona,
+    )
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda c: _ConfigCapturingSpeaker(c),
+    )
+    callbacks = _make_callbacks()
+    monkeypatch.setattr("heckler.controller.AudioCapture", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.controller.Reactor", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
+    monkeypatch.setattr(
+        "heckler.controller.open_store",
+        lambda _p: __import__("sqlite3").connect(":memory:", check_same_thread=False),
+    )
+    monkeypatch.setattr("heckler.controller.init_transcript_schema", lambda _c: None)
+    monkeypatch.setattr("heckler.controller.create_session", lambda *a, **kw: None)
+    monkeypatch.setattr("heckler.controller.close_session", lambda *a, **kw: None)
+    monkeypatch.setattr("heckler.controller.export_session_markdown", lambda *a, **kw: None)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models(mode="transcribe")
+    ctrl.start(mode="transcribe")
+    ctrl.switch_mode("persona", persona_name="heckler_arg")
+
+    assert ctrl._speaker is not None
+    assert speech_stack_signature(ctrl._transcriber._config) == ("es", "e")
     ctrl.stop()
 
 

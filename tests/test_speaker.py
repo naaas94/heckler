@@ -49,6 +49,15 @@ def test_init_passes_resolved_kokoro_lang_code_to_pipeline(
     mock_kp.assert_called_once_with(lang_code=expected_lang_code)
 
 
+def test_kokoro_lang_code_es_after_reload(monkeypatch):
+    """G1: Spanish locale config constructs KPipeline with lang_code=e (reload path)."""
+    cfg = apply_resolved_locale(dataclasses.replace(HecklerConfig(), locale="es"))
+    mock_kp = MagicMock()
+    monkeypatch.setattr(kokoro, "KPipeline", mock_kp)
+    Speaker(cfg)
+    mock_kp.assert_called_once_with(lang_code="e")
+
+
 def test_init_logs_download_before_pipeline_construct(monkeypatch, config):
     mock_kp = MagicMock()
     mock_info = MagicMock()

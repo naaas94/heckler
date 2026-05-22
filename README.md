@@ -74,9 +74,23 @@ Operators set **`locale`** only (not separate Whisper/Kokoro env vars). Supporte
 | `en-gb` | `en` | `b` (British English) |
 | `es` | `es` | `e` (Spanish) |
 
-- **`HECKLER_LOCALE`** sets the process-default locale before `load_config()` resolves whisper/kokoro fields.
-- Persona **`[voice].locale`** in `prompts/<persona>/persona.toml` overrides the merged config when heavy models are built with **`load_models(persona_name=...)`** (or when that persona is already selected via env before load). LLM register/language stays in `system.md` / `examples.json` only.
-- **`swap_persona`** (CLI/GUI hot-swap) updates Reactor prompts and gate-related config only; **STT/TTS language stays whatever was fixed at the last `load_models` call**. To change Whisper/Kokoro language after a persona or locale change, call **`load_models`** again with the desired persona (or restart the process).
+- **`HECKLER_LOCALE`** sets the process-default locale before `load_config()` resolves whisper/kokoro fields. In the GUI, the **Speech locale** combo can override this with an explicit slug; **From persona** passes no override and uses the selected persona’s `[voice].locale`.
+- Persona **`[voice].locale`** in `prompts/<persona>/persona.toml` is merged when heavy models are built (`load_models`, `ensure_heavy_models`, or GUI reload). LLM register/language stays in `system.md` / `examples.json` only.
+
+### Persona locale and reload
+
+Heckler compares the loaded speech stack to the target persona (and optional locale override) using **`(whisper_language, kokoro_lang_code)`** — see `speech_stack_signature` in `heckler/locale.py`.
+
+| Change | Behavior |
+|--------|----------|
+| Same signature (e.g. `heckler` → `technician`, both English) | **Hot-swap** only: `swap_persona` updates the Reactor; Whisper/Kokoro stay loaded. |
+| Different signature (e.g. `heckler` → `heckler_arg`, English → Spanish) | **Reload** Whisper + Kokoro (~20–60 s). GUI asks while the pipeline is running; **Start** reloads automatically when not running. |
+| Voice-only change, same locale | No reload (Kokoro voice is not part of the signature). |
+| Re-select the same running persona | No-op (no second swap or reload). |
+
+**GUI:** Use the persona picker and **Speech locale** combo before **Start**, or change persona while running (reload dialog when signatures differ). **Reload speech models** forces a reload for the current persona + locale override. Controls are disabled during reload; use **Stop** if you need to abort a long reload. **`HECKLER_LOCALE`** vs **From persona**: env sets the base config; the combo’s **From persona** does not pass a slug to the controller (persona TOML wins).
+
+**CLI:** `python -m heckler --persona heckler_arg` loads Spanish STT/TTS at startup via `ensure_heavy_models`. There is no interactive hot-swap on the CLI; change persona or locale by restarting with a different `--persona` or `HECKLER_LOCALE`.
 
 ## Usage
 

@@ -68,7 +68,7 @@ name = "<display name>"         # non-empty string — required
 description = "<one sentence>"  # string — required
 
 [voice]                         # optional section; omit keys you do not override
-locale = "<en|en-us|en-gb|es>"  # optional; STT/TTS only when baked at load_models, not on swap_persona alone
+locale = "<en|en-us|en-gb|es>"  # optional; drives STT/TTS when heavy models load/reload (signature change)
 kokoro_voice = "<id>"
 kokoro_speed = <float>
 
@@ -238,13 +238,19 @@ wrong keys). Lower (0.7–0.8) is more stable for analytical or formal personas
 but reduces wit variance. `max_tokens = 150` is sufficient for ≤15-word
 comments; increase only if the persona has explicitly longer output by design.
 
+### Per-locale Kokoro voice table
+
+| Locale slug | Kokoro `lang_code` | Compatible voice prefixes | Example |
+|-------------|-------------------|---------------------------|---------|
+| `en` / `en-us` | `a` | `af_*`, `am_*` | `af_sarah` |
+| `en-gb` | `b` | `bf_*`, `bm_*` | `bf_emma` |
+| `es` | `e` | `ef_*`, `em_*` | `ef_dora` |
+
+**Rule:** Always match voice prefix to `lang_code`. Mixing (e.g. `af_sarah` with `locale = "es"`) sets the Spanish phonemizer but uses an English voice — sounds wrong. Heckler will warn in the status bar but will not block the reload.
+
 ### Kokoro voice vs character
 
-`kokoro_voice` must be a valid Kokoro voice id. The reference persona uses
-`af_sarah`. Match voice timbre to the spoken character: dry/formal personas
-pair better with lower-affect voices; energetic personas benefit from faster
-`kokoro_speed` (1.1–1.2). Do not set `kokoro_speed` below 0.85 (unnatural
-pacing) or above 1.3 (loss of intelligibility).
+`kokoro_voice` must be a valid Kokoro voice id. Match voice timbre to the spoken character: dry/formal personas pair better with lower-affect voices; energetic personas benefit from faster `kokoro_speed` (1.1–1.2). Do not set `kokoro_speed` below 0.85 (unnatural pacing) or above 1.3 (loss of intelligibility). Spanish personas should use `ef_*` / `em_*` voices (see table above), not `af_sarah`.
 
 ### `density_threshold` and `min_word_count`
 
