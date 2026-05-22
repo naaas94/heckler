@@ -96,8 +96,109 @@ def test_main_shutdown_stops_capture_and_joins_threads(monkeypatch):
         assert not t.is_alive(), f"Thread {t.name} still alive after main() returned"
 
 
+def test_main_load_models_persona_name_on_persona_mode(monkeypatch):
+    """Persona-mode ``main()`` passes the same ``persona_name`` to ``load_models`` as ``start()`` (A4)."""
+    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler", locale="en")
+    load_calls: list[dict] = []
+    start_calls: list[dict] = []
+
+    class _RecordingController:
+        def __init__(self, _config, _callbacks):
+            pass
+
+        def load_models(self, **kwargs):
+            load_calls.append(kwargs)
+
+        def start(self, mode, *, persona_name=None, session_name=None):
+            start_calls.append(
+                {"mode": mode, "persona_name": persona_name, "session_name": session_name}
+            )
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.PipelineController", _RecordingController)
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    main(["--persona", "stage-host"])
+
+    assert len(load_calls) == 1
+    assert load_calls[0]["mode"] == "persona"
+    assert load_calls[0]["persona_name"] == "stage-host"
+    assert len(start_calls) == 1
+    assert start_calls[0]["persona_name"] == "stage-host"
+
+
+def test_main_load_models_uses_config_persona_when_cli_omitted(monkeypatch):
+    """Default persona-mode ``main([])`` forwards ``config.persona_name`` into ``load_models``."""
+    cfg = HecklerConfig(
+        anthropic_api_key="test-key", persona_name="default-host", locale="en"
+    )
+    load_calls: list[dict] = []
+
+    class _RecordingController:
+        def __init__(self, _config, _callbacks):
+            pass
+
+        def load_models(self, **kwargs):
+            load_calls.append(kwargs)
+
+        def start(self, *_a, **_k):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.PipelineController", _RecordingController)
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    main([])
+
+    assert load_calls[0]["persona_name"] == "default-host"
+
+
+def test_main_transcribe_load_models_omits_persona_name(monkeypatch):
+    """Transcribe-mode ``main()`` must not pass ``persona_name`` into ``load_models``."""
+    cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler")
+    load_calls: list[dict] = []
+
+    class _RecordingController:
+        def __init__(self, _config, _callbacks):
+            pass
+
+        def load_models(self, **kwargs):
+            load_calls.append(kwargs)
+
+        def start(self, *_a, **_k):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("heckler.pipeline.load_config", lambda: cfg)
+    monkeypatch.setattr("heckler.controller.PipelineController", _RecordingController)
+    monkeypatch.setattr(
+        "heckler.pipeline.time.sleep",
+        lambda _: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    main(["--mode", "transcribe"])
+
+    assert len(load_calls) == 1
+    assert load_calls[0]["mode"] == "transcribe"
+    assert load_calls[0].get("persona_name") is None
+
+
 def test_main_persona_flag_overrides_config(monkeypatch):
-    """``--persona`` CLI flag overrides ``config.persona_name`` for ``load_persona`` path."""
+    """``--persona`` CLI flag overrides ``config.persona_name`` for ``load_persona`` (load + start)."""
     cfg = HecklerConfig(anthropic_api_key="test-key", persona_name="heckler")
     seen: list[Path] = []
 
@@ -131,8 +232,8 @@ def test_main_persona_flag_overrides_config(monkeypatch):
 
     main(["--persona", "stage-host"])
 
-    assert len(seen) == 1
-    assert seen[0].name == "stage-host"
+    assert len(seen) == 2
+    assert all(p.name == "stage-host" for p in seen)
 
 
 def test_main_persona_not_found_exits_nonzero(monkeypatch, capsys):
@@ -155,7 +256,7 @@ def test_main_persona_not_found_exits_nonzero(monkeypatch, capsys):
 
     assert excinfo.value.code == 1
     captured = capsys.readouterr()
-    assert "[HECKLER] Error:" in captured.out
+    assert "[HECKLER] Error loading models:" in captured.out
     assert "no such persona bundle" in captured.out
 
 

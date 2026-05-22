@@ -374,6 +374,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         controller.load_models(
             on_progress=lambda msg: print(f"[HECKLER] {msg}", flush=True),
             mode=mode,
+            persona_name=persona_name if mode == "persona" else None,
         )
     except Exception as exc:
         print(f"[HECKLER] Error loading models: {exc}", flush=True)
