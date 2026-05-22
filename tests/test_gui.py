@@ -18,6 +18,7 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import QComboBox, QPlainTextEdit, QRadioButton
 
 from heckler.config import HecklerConfig
+from heckler.controller import SpeechReloadPolicy
 from heckler.gui.app import ModelLoadThread
 from heckler.gui.main_window import HecklerMainWindow, SignalBridge
 from heckler.locale import SUPPORTED_LOCALES, supported_locale_labels
@@ -300,28 +301,238 @@ def test_persona_combo_enabled_before_pipeline_start(qtbot):
     assert w._persona_combo.isEnabled() is True
 
 
-def test_start_button_ensure_heavy_models_called(qtbot):
-    """D7: Start in persona mode calls ensure_heavy_models before start."""
+def test_start_button_apply_then_start_when_no_reload(qtbot):
+    """D7/T5: Start in persona mode uses apply path; start() when no async reload."""
     ctrl = _stub_controller(is_running=False)
-    order: list[str] = []
-
-    def ensure_heavy_models(**kwargs):
-        order.append("ensure")
-        return False
-
-    def start(*args, **kwargs):
-        order.append("start")
-
-    ctrl.ensure_heavy_models.side_effect = ensure_heavy_models
-    ctrl.start.side_effect = start
+    ctrl.heavy_models_need_reload.return_value = False
+    ctrl.start.side_effect = lambda *a, **k: None
     w = HecklerMainWindow(HecklerConfig(), ctrl)
     qtbot.addWidget(w)
     w.set_models_ready(True)
     w._on_start_stop()
-    assert order == ["ensure", "start"]
-    ctrl.ensure_heavy_models.assert_called_once()
-    assert ctrl.ensure_heavy_models.call_args.kwargs["mode"] == "persona"
-    assert ctrl.ensure_heavy_models.call_args.kwargs["locale_override"] is None
+    ctrl.heavy_models_need_reload.assert_called()
+    ctrl.start.assert_called_once()
+    assert w._reloading is False
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler"])
+def test_apply_persona_and_speech_same_sig_hot_swap(_mock_list, qtbot):
+    ctrl = _stub_controller(is_running=True, current_mode="persona", current_persona_name="heckler")
+    ctrl.heavy_models_need_reload.return_value = False
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._apply_persona_and_speech(
+        "heckler",
+        None,
+        running=True,
+        reload_policy=SpeechReloadPolicy.ask,
+        on_progress=lambda m: None,
+    )
+    ctrl.swap_persona.assert_called_once_with("heckler")
+    ctrl.reload_speech_stack_for_persona.assert_not_called()
+
+
+@patch("heckler.gui.main_window._ReloadThread")
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler_arg"])
+def test_apply_persona_and_speech_cross_sig_auto_reloads(
+    _mock_list, mock_thread_cls, qtbot
+):
+    mock_thread = MagicMock()
+    mock_thread_cls.return_value = mock_thread
+    ctrl = _stub_controller(is_running=False)
+    ctrl.heavy_models_need_reload.return_value = True
+    ctrl.loaded_speech_stack.return_value = ("en", "a")
+    target_cfg = HecklerConfig(locale="es", kokoro_lang_code="e", whisper_language="es")
+    ctrl.target_speech_config.return_value = target_cfg
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._apply_persona_and_speech(
+        "heckler_arg",
+        None,
+        running=False,
+        reload_policy=SpeechReloadPolicy.auto,
+        on_progress=lambda m: None,
+    )
+    assert w._reloading is True
+    mock_thread.start.assert_called_once()
+    ctrl.reload_speech_stack_for_persona.assert_not_called()
+
+
+@patch("heckler.gui.main_window._ReloadThread")
+@patch("heckler.gui.main_window.QMessageBox.question")
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler_arg"])
+def test_apply_persona_and_speech_ask_confirm_reloads(
+    _mock_list, mock_question, mock_thread_cls, qtbot
+):
+    mock_thread_cls.return_value = MagicMock()
+    from PyQt6.QtWidgets import QMessageBox
+
+    mock_question.return_value = QMessageBox.StandardButton.Ok
+    ctrl = _stub_controller(is_running=True, current_mode="persona", current_persona_name="heckler")
+    ctrl.heavy_models_need_reload.return_value = True
+    ctrl.loaded_speech_stack.return_value = ("en", "a")
+    ctrl.target_speech_config.return_value = HecklerConfig(
+        locale="es", kokoro_lang_code="e", whisper_language="es"
+    )
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._persona_combo.setCurrentIndex(w._persona_combo.findText("heckler_arg"))
+    w._apply_persona_and_speech(
+        "heckler_arg",
+        None,
+        running=True,
+        reload_policy=SpeechReloadPolicy.ask,
+        on_progress=lambda m: None,
+    )
+    mock_question.assert_called_once()
+    assert w._reloading is True
+
+
+@patch("heckler.gui.main_window.QMessageBox.question")
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler", "heckler_arg"])
+def test_apply_persona_and_speech_ask_cancel_reverts(
+    _mock_list, mock_question, qtbot
+):
+    from PyQt6.QtWidgets import QMessageBox
+
+    mock_question.return_value = QMessageBox.StandardButton.Cancel
+    ctrl = _stub_controller(is_running=True, current_mode="persona", current_persona_name="heckler")
+    ctrl.heavy_models_need_reload.return_value = True
+    ctrl.loaded_speech_stack.return_value = ("en", "a")
+    ctrl.target_speech_config.return_value = HecklerConfig(locale="en")
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._persona_combo.setCurrentIndex(w._persona_combo.findText("heckler"))
+    w._locale_combo.setCurrentIndex(0)
+    w._mark_stable_selection()
+    prev_persona = w._stable_persona_idx
+    prev_locale = w._stable_locale_idx
+    w._persona_combo.setCurrentIndex(w._persona_combo.findText("heckler_arg"))
+    w._apply_persona_and_speech(
+        "heckler_arg",
+        None,
+        running=True,
+        reload_policy=SpeechReloadPolicy.ask,
+        on_progress=lambda m: None,
+    )
+    assert w._persona_combo.currentIndex() == prev_persona
+    assert w._locale_combo.currentIndex() == prev_locale
+    ctrl.swap_persona.assert_not_called()
+    ctrl.reload_speech_stack_for_persona.assert_not_called()
+    assert w._reloading is False
+
+
+@patch.object(HecklerMainWindow, "_show_error")
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler_arg"])
+def test_apply_persona_and_speech_reload_failure_reverts(
+    _mock_list, _mock_show_error, qtbot
+):
+    ctrl = _stub_controller(is_running=True, current_mode="persona")
+    ctrl.heavy_models_need_reload.return_value = True
+    ctrl.loaded_speech_stack.return_value = ("en", "a")
+    ctrl.target_speech_config.return_value = HecklerConfig(locale="es")
+    ctrl.reload_speech_stack_for_persona.side_effect = RuntimeError("load boom")
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+    w._persona_combo.setCurrentIndex(0)
+    w._locale_combo.setCurrentIndex(w._locale_combo.findText("es"))
+    saved_persona = 0
+    saved_locale = w._locale_combo.currentIndex()
+    w._reload_revert_persona_idx = saved_persona
+    w._reload_revert_locale_idx = saved_locale
+    w._persona_combo.setCurrentIndex(w._persona_combo.count() - 1)
+    w._on_reload_done(False, "load boom")
+    assert w._persona_combo.currentIndex() == saved_persona
+    assert w._locale_combo.currentIndex() == saved_locale
+    assert w._reloading is False
+
+
+@patch.object(HecklerMainWindow, "_show_error")
+@patch("heckler.gui.main_window._ReloadThread")
+@patch("heckler.gui.main_window.QMessageBox.question")
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler"])
+def test_reloading_flag_cleared_on_all_paths(
+    _mock_list, mock_question, mock_thread_cls, _mock_show_error, qtbot
+):
+    mock_thread_cls.return_value = MagicMock()
+    from PyQt6.QtWidgets import QMessageBox
+
+    ctrl = _stub_controller(is_running=True, current_mode="persona", current_persona_name="heckler")
+    ctrl.heavy_models_need_reload.return_value = True
+    ctrl.target_speech_config.return_value = HecklerConfig(locale="es")
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    w.set_models_ready(True)
+
+    mock_question.return_value = QMessageBox.StandardButton.Cancel
+    w._apply_persona_and_speech(
+        "heckler",
+        "es",
+        running=True,
+        reload_policy=SpeechReloadPolicy.ask,
+        on_progress=lambda m: None,
+    )
+    assert w._reloading is False
+
+    mock_question.return_value = QMessageBox.StandardButton.Ok
+    w._apply_persona_and_speech(
+        "heckler",
+        "es",
+        running=True,
+        reload_policy=SpeechReloadPolicy.ask,
+        on_progress=lambda m: None,
+    )
+    assert w._reloading is True
+    w._on_reload_done(True, None)
+    assert w._reloading is False
+
+    w._apply_persona_and_speech(
+        "heckler",
+        "es",
+        running=True,
+        reload_policy=SpeechReloadPolicy.ask,
+        on_progress=lambda m: None,
+    )
+    w._on_reload_done(False, "err")
+    assert w._reloading is False
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler_arg"])
+def test_voice_locale_mismatch_warning_logged(_mock_list, qtbot, caplog):
+    import logging
+
+    ctrl = _stub_controller()
+    ctrl.heavy_models_need_reload.return_value = False
+    ctrl.target_speech_config.return_value = HecklerConfig(
+        locale="es",
+        kokoro_lang_code="e",
+        whisper_language="es",
+        kokoro_voice="af_sarah",
+    )
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    with caplog.at_level(logging.WARNING):
+        w._check_voice_locale_warning("heckler_arg", None)
+    assert any("af_sarah" in r.message for r in caplog.records)
+    assert any("may not be compatible" in r.message for r in caplog.records)
+
+
+@patch("heckler.gui.main_window.list_personas", return_value=["heckler"])
+def test_reload_speech_btn_present(_mock_list, qtbot):
+    ctrl = _stub_controller()
+    w = HecklerMainWindow(HecklerConfig(), ctrl)
+    qtbot.addWidget(w)
+    assert w._reload_speech_btn is not None
+    assert w._reload_speech_btn.text() == "Reload speech models"
+    w.set_models_ready(True)
+    with patch.object(w, "_start_reload") as mock_start:
+        w._reload_speech_btn.click()
+        mock_start.assert_called_once()
 
 
 @patch("heckler.gui.main_window.QDesktopServices.openUrl")
