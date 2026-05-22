@@ -9,7 +9,7 @@ import threading
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from heckler.config import load_config
+from heckler.config import HecklerConfig, load_config
 from heckler.controller import PipelineController
 from heckler.gui.main_window import HecklerMainWindow, SignalBridge
 
@@ -23,9 +23,10 @@ class ModelLoadThread(QThread):
     finished_ok = pyqtSignal()
     failed = pyqtSignal(str)
 
-    def __init__(self, controller: PipelineController) -> None:
+    def __init__(self, controller: PipelineController, config: HecklerConfig) -> None:
         super().__init__()
         self._controller = controller
+        self._config = config
 
     def run(self) -> None:  # pragma: no cover — exercised via integration / manual run
         threading.current_thread().name = "heckler-gui-loader"
@@ -34,7 +35,13 @@ class ModelLoadThread(QThread):
             def on_prog(msg: str) -> None:
                 self.progress.emit(msg)
 
-            self._controller.load_models(on_progress=on_prog)
+            mode = (self._config.mode or "persona").strip().lower()
+            persona_name = self._config.persona_name if mode == "persona" else None
+            self._controller.load_models(
+                on_progress=on_prog,
+                mode=mode,
+                persona_name=persona_name,
+            )
             self.finished_ok.emit()
         except Exception as e:
             logger.exception("Model loading failed")
@@ -52,7 +59,7 @@ def main() -> None:
     window.attach_bridge(bridge)
     window.show()
 
-    loader = ModelLoadThread(controller)
+    loader = ModelLoadThread(controller, config)
 
     def on_progress(msg: str) -> None:
         status_bar = window.statusBar()

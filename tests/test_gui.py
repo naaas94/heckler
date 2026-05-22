@@ -122,21 +122,35 @@ def test_signal_bridge_reaction_appends(qtbot):
 
 
 def test_model_load_thread_invokes_load_models_off_thread(qtbot):
+    cfg = HecklerConfig(persona_name="test-persona", mode="persona")
     ctrl = MagicMock()
     call_idents: list[int] = []
 
-    def load_models(on_progress=None):
+    def load_models(on_progress=None, **kwargs):
         call_idents.append(threading.current_thread().ident)
         if on_progress:
             on_progress("step")
 
     ctrl.load_models.side_effect = load_models
-    thread = ModelLoadThread(ctrl)
+    thread = ModelLoadThread(ctrl, cfg)
     with qtbot.waitSignal(thread.finished_ok, timeout=5000):
         thread.start()
     ctrl.load_models.assert_called_once()
+    assert ctrl.load_models.call_args.kwargs["persona_name"] == "test-persona"
+    assert ctrl.load_models.call_args.kwargs["mode"] == "persona"
     assert len(call_idents) == 1
     assert call_idents[0] != threading.main_thread().ident
+
+
+def test_model_load_thread_transcribe_mode_omits_persona_name(qtbot):
+    cfg = HecklerConfig(persona_name="heckler", mode="transcribe")
+    ctrl = MagicMock()
+    ctrl.load_models.side_effect = lambda **kwargs: None
+    thread = ModelLoadThread(ctrl, cfg)
+    with qtbot.waitSignal(thread.finished_ok, timeout=5000):
+        thread.start()
+    assert ctrl.load_models.call_args.kwargs["persona_name"] is None
+    assert ctrl.load_models.call_args.kwargs["mode"] == "transcribe"
 
 
 @patch("heckler.gui.main_window.QDesktopServices.openUrl")
