@@ -1,5 +1,11 @@
 # Changelog
 
+## pacing-before-llm — 2026-05-22
+
+Plan: score-free pre-LLM cooldown probe on `PacingGate` so pacing can skip `react()` during cooldown; post-LLM `evaluate(score)` + TTS path unchanged. Full decomposition: `.dev/plans/pacing-before-llm/plan.md`.
+
+- T1 (PacingGate cooldown probe): Added **`PacingGate.cooldown_status()`** returning **`(in_cooldown, cooldown_remaining)`** via shared **`_cooldown_state_locked()`**; **`evaluate(score)`** override semantics unchanged. **`+`** **`tests/test_pacing_gate.py`** unit cases and override/evaluate divergence falsifier. **Rationale:** Pipeline T2 needs a score-free probe without calling **`evaluate()`** without a score (Flag 1). **Decision log:** `.dev/decision-logs/pacing-before-llm-T1.md`.
+
 ## tts-mic-gate-tail — 2026-05-21
 
 Plan: post-playback acoustic tail on `Speaker.is_playing` before mic capture resumes, configurable via `TTS_GATE_TAIL_MS`. Full decomposition: `.dev/plans/tts-mic-gate-tail/plan.md`.

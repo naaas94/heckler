@@ -118,3 +118,50 @@ def test_elapsed_equals_interval_exits_cooldown(monkeypatch):
     gate.record_output()
     monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 110.0)
     assert gate.evaluate(0.0) == (True, 0.0)
+
+
+def test_cooldown_status_first_call_not_in_cooldown(monkeypatch):
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 1000.0)
+    gate = PacingGate(HecklerConfig())
+    assert gate.cooldown_status() == (False, 0.0)
+
+
+def test_cooldown_status_within_cooldown(monkeypatch):
+    cfg = HecklerConfig(min_output_interval_s=10.0)
+    gate = PacingGate(cfg)
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 100.0)
+    gate.record_output()
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 105.0)
+    assert gate.cooldown_status() == (True, 5.0)
+
+
+def test_cooldown_status_after_interval_expires(monkeypatch):
+    cfg = HecklerConfig(min_output_interval_s=10.0)
+    gate = PacingGate(cfg)
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 100.0)
+    gate.record_output()
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 111.0)
+    assert gate.cooldown_status() == (False, 0.0)
+
+
+def test_cooldown_status_elapsed_equals_interval_not_in_cooldown(monkeypatch):
+    cfg = HecklerConfig(min_output_interval_s=10.0)
+    gate = PacingGate(cfg)
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 100.0)
+    gate.record_output()
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 110.0)
+    assert gate.cooldown_status() == (False, 0.0)
+
+
+def test_cooldown_status_ignores_score_override_while_evaluate_bypasses(monkeypatch):
+    """
+    Falsifier: pre-LLM cooldown_status must not mirror evaluate's override bypass;
+    high score during cooldown still reports in_cooldown=True from cooldown_status.
+    """
+    cfg = HecklerConfig(min_output_interval_s=10.0, score_override_threshold=0.9)
+    gate = PacingGate(cfg)
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 100.0)
+    gate.record_output()
+    monkeypatch.setattr("heckler.pacing_gate.time.time", lambda: 105.0)
+    assert gate.cooldown_status() == (True, 5.0)
+    assert gate.evaluate(0.95) == (True, 5.0)
