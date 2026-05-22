@@ -290,16 +290,16 @@ graph LR
 
 | Field | Value |
 |-------|-------|
-| **Handoff tree SHA** | `__T8_CLOSURE_SHA__` (T8 — plan §8 + audit tracked; code chain `d0ce6d0` T5 → `344ca19d` T7 → `4739b325` T6) |
+| **Handoff tree SHA** | `03c779e745ce2e6a8019225609dfd0734d441662` (T8 — plan §8 + audit tracked; code chain `d0ce6d0` T5 → `344ca19d` T7 → `4739b325` T6) |
 | **Verification command** | `pytest tests/test_locale.py tests/test_config.py tests/test_speaker.py tests/test_persona.py tests/test_controller.py tests/test_pipeline.py tests/test_gui.py -q` |
-| **Checkout** | `git checkout __T8_CLOSURE_SHA__` — `plan.md` §8.1–§8.6 and `.dev/audits/2026-05-22-locale-lang-propagation.md` resolve in-tree at closure SHA (remediates FIND-02/03) |
+| **Checkout** | `git checkout 03c779e745ce2e6a8019225609dfd0734d441662` — `plan.md` §8.1–§8.6 and `.dev/audits/2026-05-22-locale-lang-propagation.md` resolve in-tree at closure SHA (remediates FIND-02/03) |
 | **Result** | **146 passed** in 4.03s, exit code **0** |
 | **Prior SHA** | `d0ce6d0ee22b83aa988c1bfbeca2b5d5fffc38f8` (v1.1.0 — audit **fail** @ `.dev/audits/2026-05-22-locale-lang-propagation.md`) |
 | **Environment** | Windows, project venv (implicit in local run) |
 
 ### §8.2 Artifact chain
 
-| Artifact | Path | `git show __T8_CLOSURE_SHA__:<path>` |
+| Artifact | Path | `git show 03c779e745ce2e6a8019225609dfd0734d441662:<path>` |
 |----------|------|--------------------------------------|
 | Context map | `.dev/plans/locale-lang-propagation/context-map.md` | OK — scout SHA `56c3748` (stale vs handoff; scope and coupling surfaces still valid) |
 | Plan | `.dev/plans/locale-lang-propagation/plan.md` | OK — v1.2.0 §8.1–§8.6 at closure SHA |
@@ -372,7 +372,7 @@ Recommended narrative-blind Phase 0 read order:
 | `.dev/audits/2026-05-22-locale-lang-propagation.md` rev 1 | **FIND-04** CLI Surface 1 | Wire `persona_name` in `pipeline.py` `load_models` | **T6** @ `4739b325` | **remediated** — §2 Entry-point integration; §8.4 Surface 1 **closed** |
 | Same | **FIND-05** GUI Surface 1 | Wire `persona_name` + `mode` in `ModelLoadThread` | **T7** @ `344ca19d` | **remediated** — same |
 | Same | **FIND-06** §8.4 overstated | Correct disposition + execution review | **T8** | **remediated** — §8.4 row; v1.1.0 execution review superseded |
-| Same | **FIND-02/03** plan §8 not in SHA / hygiene | Commit plan v1.2.0 at closure SHA | **T8** | **remediated** — §8.1–§8.2 resolve via `git show __T8_CLOSURE_SHA__:plan.md` |
+| Same | **FIND-02/03** plan §8 not in SHA / hygiene | Commit plan v1.2.0 at closure SHA | **T8** | **remediated** — §8.1–§8.2 resolve via `git show 03c779e745ce2e6a8019225609dfd0734d441662:plan.md` |
 
 **Accepted deferrals (no amendment):** FIND-07 (`WHISPER_LANGUAGE` ignore test), FIND-08 (second `load_models` replace test), FIND-09 (README↔`SUPPORTED_LOCALES` pytest), FIND-01 (context-map stale — informational).
 
@@ -382,11 +382,11 @@ Recommended narrative-blind Phase 0 read order:
 
 **v1.1.0 pre-audit verdict (superseded):** Core resolver, config, Speaker, persona merge, and controller API matched §2; **audit failed** on production entry points (FIND-04/05/06) and plan §8 hygiene (FIND-02/03).
 
-**v1.2.0 amendment verdict:** Surface 1 closed at `pipeline.py` and `gui/app.py` without changing Flag 2 hot-swap semantics. Amendment verification **146 passed** (§8.1). Re-audit recommended at `__T8_CLOSURE_SHA__` against `.dev/audits/2026-05-22-locale-lang-propagation.md` rev 1 findings.
+**v1.2.0 amendment verdict:** Surface 1 closed at `pipeline.py` and `gui/app.py` without changing Flag 2 hot-swap semantics. Amendment verification **146 passed** (§8.1). Re-audit recommended at `03c779e745ce2e6a8019225609dfd0734d441662` against `.dev/audits/2026-05-22-locale-lang-propagation.md` rev 1 findings.
 
 | Subtask | Assessment |
 |---------|------------|
 | **T1–T5** | Landed @ `d0ce6d0` |
 | **T6** | Landed @ `4739b325` — CLI `load_models(persona_name=...)` |
 | **T7** | Landed @ `344ca19d` — GUI `ModelLoadThread` wiring |
-| **T8** | Landed @ `__T8_CLOSURE_SHA__` — plan §8 + audit cross-link committed |
+| **T8** | Landed @ `03c779e745ce2e6a8019225609dfd0734d441662` — plan §8 + audit cross-link committed |
