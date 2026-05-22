@@ -5,6 +5,32 @@ import pytest
 from heckler.config import HecklerConfig, load_config
 
 
+def test_heckler_config_tts_gate_tail_ms_default() -> None:
+    cfg = HecklerConfig()
+    assert cfg.tts_gate_tail_ms == 400
+
+
+def test_load_config_tts_gate_tail_ms_env_override(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TTS_GATE_TAIL_MS", "300")
+    cfg = load_config()
+    assert cfg.tts_gate_tail_ms == 300
+
+
+def test_load_config_tts_gate_tail_ms_zero_disables_tail(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TTS_GATE_TAIL_MS", "0")
+    cfg = load_config()
+    assert cfg.tts_gate_tail_ms == 0
+
+
+def test_load_config_tts_gate_tail_ms_invalid_raises(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TTS_GATE_TAIL_MS", "not-a-number")
+    with pytest.raises(ValueError):
+        load_config()
+
+
 def test_heckler_config_transcribe_field_defaults() -> None:
     cfg = HecklerConfig()
     assert cfg.mode == "persona"

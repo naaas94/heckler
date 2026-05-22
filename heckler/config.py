@@ -31,6 +31,7 @@ class HecklerConfig:
     min_output_interval_s: float = 12.0
     kokoro_voice: str = "af_sarah"
     kokoro_speed: float = 1.05
+    tts_gate_tail_ms: int = 400
     sqlite_database_path: str = "logs/heckler.db"
     log_density_failures: bool = False
     queue_maxsize: int = 10
@@ -72,4 +73,5 @@ def load_config() -> HecklerConfig:
         min_output_interval_s=float(os.getenv("PACING_INTERVAL", "12.0")),
         kokoro_voice=os.getenv("KOKORO_VOICE", "af_sarah"),
         log_density_failures=os.getenv("LOG_DENSITY_FAILURES", "false").lower() == "true",
+        tts_gate_tail_ms=int(os.getenv("TTS_GATE_TAIL_MS", "400")),
     )

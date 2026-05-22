@@ -1,5 +1,11 @@
 # Changelog
 
+## tts-mic-gate-tail — 2026-05-21
+
+Plan: post-playback acoustic tail on `Speaker.is_playing` before mic capture resumes, configurable via `TTS_GATE_TAIL_MS`. Full decomposition: `.dev/plans/tts-mic-gate-tail/plan.md`.
+
+- T1 (Config surface for mic-gate tail): Added **`HecklerConfig.tts_gate_tail_ms`** (default **400**) and **`load_config()`** parsing of **`TTS_GATE_TAIL_MS`** via bare **`int(os.getenv(...))`** (no strip). **`+`** **`tests/test_config.py`** default, env override, and **`0`** disable falsifiers. **Rationale:** Typed config must exist before **T2** reads **`self._config.tts_gate_tail_ms`** in **`Speaker.speak`** instead of hardcoding milliseconds.
+
 ## gui-launcher — 2026-05-17
 
 Plan: PyQt6 GUI launcher replacing the blocking CLI `main()` loop with a Qt event loop, persona hot-swap, mode switching, and live transcript/reaction feeds. Full decomposition: `.dev/plans/gui-launcher/plan.md`.
