@@ -71,6 +71,14 @@ def _audio_utt(transcript: str) -> Utterance:
     )
 
 
+def _reaction_worker_pacing_mock(
+    *, in_cooldown: bool = False, cooldown_remaining: float = 0.0
+) -> MagicMock:
+    pg = MagicMock()
+    pg.cooldown_status.return_value = (in_cooldown, cooldown_remaining)
+    return pg
+
+
 # ---------------------------------------------------------------------------
 # ReactorHolder tests
 # ---------------------------------------------------------------------------
@@ -557,13 +565,39 @@ def test_on_reaction_callback_not_fired_on_llm_error():
     _run_reaction_worker(
         context_buffer=context_buffer,
         reactor_holder=ReactorHolder(reactor),
-        pacing_gate=MagicMock(),
+        pacing_gate=_reaction_worker_pacing_mock(),
         speaker=MagicMock(),
         heckler_logger=MagicMock(),
         reaction_queue=rq,
         on_reaction=on_reaction,
     )
 
+    on_reaction.assert_not_called()
+
+
+def test_on_reaction_not_fired_on_pre_llm_pacing():
+    """Pre-LLM cooldown skip must not invoke on_reaction (no ReactorResult)."""
+    from heckler.pipeline import _run_reaction_worker
+
+    rq: queue.Queue = queue.Queue()
+    rq.put(_audio_utt("during cooldown"))
+    rq.put(None)
+
+    reactor = MagicMock()
+    on_reaction = MagicMock()
+    context_buffer = MagicMock()
+
+    _run_reaction_worker(
+        context_buffer=context_buffer,
+        reactor_holder=ReactorHolder(reactor),
+        pacing_gate=_reaction_worker_pacing_mock(in_cooldown=True, cooldown_remaining=4.0),
+        speaker=MagicMock(),
+        heckler_logger=MagicMock(),
+        reaction_queue=rq,
+        on_reaction=on_reaction,
+    )
+
+    reactor.react.assert_not_called()
     on_reaction.assert_not_called()
 
 
@@ -580,7 +614,7 @@ def test_on_reaction_callback_fires_with_was_spoken_true_on_success():
     reactor = MagicMock()
     reactor.react.return_value = (rr, 5.0, None)
 
-    pacing = MagicMock()
+    pacing = _reaction_worker_pacing_mock()
     pacing.evaluate.return_value = (True, 0.0)
 
     speaker = MagicMock()
@@ -602,6 +636,8 @@ def test_on_reaction_callback_fires_with_was_spoken_true_on_success():
 
     assert len(received) == 1
     assert received[0] == (rr, True)
+    pacing.cooldown_status.assert_called_once()
+    pacing.evaluate.assert_called_once_with(0.85)
 
 
 def test_on_reaction_callback_fires_with_was_spoken_false_on_pacing_gate():
@@ -616,7 +652,7 @@ def test_on_reaction_callback_fires_with_was_spoken_false_on_pacing_gate():
     reactor = MagicMock()
     reactor.react.return_value = (rr, 5.0, None)
 
-    pacing = MagicMock()
+    pacing = _reaction_worker_pacing_mock()
     pacing.evaluate.return_value = (False, 8.0)
 
     received: list[tuple] = []
@@ -635,6 +671,9 @@ def test_on_reaction_callback_fires_with_was_spoken_false_on_pacing_gate():
 
     assert len(received) == 1
     assert received[0] == (rr, False)
+    pacing.cooldown_status.assert_called_once()
+    pacing.evaluate.assert_called_once_with(0.85)
+    reactor.react.assert_called_once()
 
 
 def test_on_transcript_callback_exception_does_not_kill_worker():

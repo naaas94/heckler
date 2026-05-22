@@ -977,6 +977,7 @@ def test_reaction_worker_pre_llm_pacing_skips_react():
     assert event.cooldown_remaining_at_eval == 3.5
     assert event.llm_latency_ms is None
     assert event.tts_latency_ms is None
+    assert event.spoken is False
 
 
 def test_reaction_worker_pacing_gate_after_successful_react():
@@ -1013,6 +1014,11 @@ def test_reaction_worker_pacing_gate_after_successful_react():
 
     pacing_gate.cooldown_status.assert_called_once()
     pacing_gate.evaluate.assert_called_once_with(0.95)
+    reactor.react.assert_called_once()
     event = heckler_logger.log_event.call_args[0][0]
+    assert event.reactor_result is rr
+    assert event.passed_score_gate is True
+    assert event.llm_latency_ms == 7.0
     assert event.discard_reason == DiscardReason.PACING_GATE
     assert event.passed_pacing_gate is False
+    assert event.spoken is False
