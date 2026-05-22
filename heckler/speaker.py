@@ -24,7 +24,7 @@ class Speaker:
     def __init__(self, config: HecklerConfig) -> None:
         """
         Loads KPipeline at init time (slow, do once).
-        lang_code='a' for American English.
+        Kokoro phonemizer language comes from ``config.kokoro_lang_code`` (resolved from ``locale``).
         Stores is_playing as threading.Event — shared with AudioCapture.
         """
         self._config = config
@@ -32,7 +32,7 @@ class Speaker:
         logger.info("downloading TTS model")
         from kokoro import KPipeline
 
-        self._pipeline = KPipeline(lang_code="a")
+        self._pipeline = KPipeline(lang_code=config.kokoro_lang_code)
 
     def speak(self, comment: str) -> float:
         """

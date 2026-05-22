@@ -6,6 +6,10 @@ Plan: unified `HecklerConfig.locale` propagates to Whisper `whisper_language` an
 
 - T1 (Locale module and config resolution): Added **`heckler/locale.py`** with **`SUPPORTED_LOCALES`**, **`normalize_locale`**, **`resolve_locale`**, and **`UnsupportedLocaleError`**; extended **`HecklerConfig`** with **`locale`** and **`kokoro_lang_code`**; **`apply_resolved_locale`** derives **`whisper_language`** / Kokoro code; **`load_config()`** reads **`HECKLER_LOCALE`** (strip, whitespace → **`en`**) and applies resolver. **`+`** **`tests/test_locale.py`**; extended **`tests/test_config.py`**. **Rationale:** Single operator knob keeps STT/TTS aligned at config construction instead of independent env vocabularies. **Decision log:** `.dev/decision-logs/locale-lang-propagation-T1.md`. **Deferred (adversarial §2.1):** no test that a hypothetical **`WHISPER_LANGUAGE`** env is ignored — v1 documents **`HECKLER_LOCALE`** only.
 
+- T3 (Persona voice locale mapping): **`_TOML_TO_CONFIG`** maps **`[voice].locale`** → **`HecklerConfig.locale`**; **`apply_persona_overrides`** calls **`apply_resolved_locale`** after merge so persona locale updates **`whisper_language`** and **`kokoro_lang_code`**. Extended **`tests/test_persona.py`** with Spanish **`es`** example and unknown-locale falsifier.
+
+- T2 (Speaker Kokoro lang from config): **`Speaker.__init__`** passes **`config.kokoro_lang_code`** into **`KPipeline`** instead of a hard-coded American English **`"a"`**; extended **`tests/test_speaker.py`** with locale-resolved init assertions. **Rationale:** Spanish (and other mapped) locales must use the matching Kokoro phonemizer, not English-by-default.
+
 ## capture-mic-gate-during-play — 2026-05-22
 
 Plan: capture-layer Rule 1 while `Speaker.is_playing` is set — discard VAD segment formation during TTS/playback/tail, reset `VADIterator` on unmute; retain emit-time skip as second defense. Full decomposition: `.dev/plans/capture-mic-gate-during-play/plan.md`.

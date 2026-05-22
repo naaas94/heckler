@@ -9,7 +9,7 @@ import pytest
 import torch
 
 import heckler.speaker as speaker_mod
-from heckler.config import HecklerConfig
+from heckler.config import HecklerConfig, apply_resolved_locale
 from heckler.speaker import Speaker, SpeakerError
 
 
@@ -27,12 +27,26 @@ def _speaker_with_mock_pipeline(monkeypatch, config: HecklerConfig):
     return speaker, pipeline_inst, mock_cls
 
 
-def test_init_uses_american_english_and_creates_playing_event(monkeypatch, config):
+def test_init_uses_config_kokoro_lang_code_and_creates_playing_event(monkeypatch, config):
     mock_kp = MagicMock()
     monkeypatch.setattr(kokoro, "KPipeline", mock_kp)
     speaker = Speaker(config)
-    mock_kp.assert_called_once_with(lang_code="a")
+    mock_kp.assert_called_once_with(lang_code=config.kokoro_lang_code)
     assert isinstance(speaker.is_playing, threading.Event)
+
+
+@pytest.mark.parametrize(
+    ("locale", "expected_lang_code"),
+    [("en", "a"), ("en-gb", "b"), ("es", "e")],
+)
+def test_init_passes_resolved_kokoro_lang_code_to_pipeline(
+    monkeypatch, locale, expected_lang_code
+):
+    cfg = apply_resolved_locale(dataclasses.replace(HecklerConfig(), locale=locale))
+    mock_kp = MagicMock()
+    monkeypatch.setattr(kokoro, "KPipeline", mock_kp)
+    Speaker(cfg)
+    mock_kp.assert_called_once_with(lang_code=expected_lang_code)
 
 
 def test_init_logs_download_before_pipeline_construct(monkeypatch, config):
