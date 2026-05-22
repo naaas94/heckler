@@ -1,8 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from typing import Optional
 
 from dotenv import load_dotenv
+
+from heckler.locale import resolve_locale
 
 
 @dataclass(frozen=True)
@@ -16,7 +18,9 @@ class HecklerConfig:
     whisper_model_size: str = "large-v3"
     whisper_compute_type: str = "int8_float16"
     whisper_beam_size: int = 3
+    locale: str = "en"
     whisper_language: str = "en"
+    kokoro_lang_code: str = "a"
     density_threshold: float = 0.40
     min_word_count: int = 4
     context_window_size: int = 5
@@ -44,6 +48,15 @@ class HecklerConfig:
     session_name: Optional[str] = None
 
 
+def apply_resolved_locale(cfg: HecklerConfig) -> HecklerConfig:
+    profile = resolve_locale(cfg.locale)
+    return replace(
+        cfg,
+        whisper_language=profile.whisper_language,
+        kokoro_lang_code=profile.kokoro_lang_code,
+    )
+
+
 def load_config() -> HecklerConfig:
     load_dotenv()
     llm_env = (os.getenv("HECKLER_LLM_MODEL") or "").strip()
@@ -58,13 +71,16 @@ def load_config() -> HecklerConfig:
     session_name = session_name_env if session_name_env else None
     transcripts_dir_env = (os.getenv("HECKLER_TRANSCRIPTS_DIR") or "").strip()
     transcripts_dir = transcripts_dir_env if transcripts_dir_env else "transcripts"
-    return HecklerConfig(
+    locale_env = (os.getenv("HECKLER_LOCALE") or "").strip()
+    locale = locale_env if locale_env else "en"
+    cfg = HecklerConfig(
         llm_model=llm_model,
         sqlite_database_path=sqlite_database_path,
         persona_name=persona_name,
         mode=mode,
         session_name=session_name,
         transcripts_dir=transcripts_dir,
+        locale=locale,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         ollama_api_base=os.getenv("OLLAMA_API_BASE", ""),
@@ -75,3 +91,4 @@ def load_config() -> HecklerConfig:
         log_density_failures=os.getenv("LOG_DENSITY_FAILURES", "false").lower() == "true",
         tts_gate_tail_ms=int(os.getenv("TTS_GATE_TAIL_MS", "400")),
     )
+    return apply_resolved_locale(cfg)

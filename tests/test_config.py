@@ -2,7 +2,8 @@ import dataclasses
 
 import pytest
 
-from heckler.config import HecklerConfig, load_config
+from heckler.config import HecklerConfig, apply_resolved_locale, load_config
+from heckler.locale import UnsupportedLocaleError
 
 
 def test_heckler_config_tts_gate_tail_ms_default() -> None:
@@ -84,6 +85,40 @@ def test_heckler_config_frozen_blocks_assignment() -> None:
     cfg = HecklerConfig()
     with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.mode = "transcribe"  # type: ignore[misc]
+
+
+def test_heckler_config_locale_defaults_resolved() -> None:
+    cfg = apply_resolved_locale(HecklerConfig())
+    assert cfg.locale == "en"
+    assert cfg.whisper_language == "en"
+    assert cfg.kokoro_lang_code == "a"
+
+
+def test_load_config_heckler_locale_env_override(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECKLER_LOCALE", "  es  ")
+    cfg = load_config()
+    assert cfg.locale == "es"
+    assert cfg.whisper_language == "es"
+    assert cfg.kokoro_lang_code == "e"
+
+
+def test_load_config_heckler_locale_whitespace_falls_back_to_en(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECKLER_LOCALE", "   ")
+    cfg = load_config()
+    assert cfg.locale == "en"
+    assert cfg.whisper_language == "en"
+    assert cfg.kokoro_lang_code == "a"
+
+
+def test_load_config_heckler_locale_unknown_raises(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HECKLER_LOCALE", "fr")
+    with pytest.raises(UnsupportedLocaleError):
+        load_config()
 
 
 def test_replace_updates_mode_without_touching_transcribe_defaults() -> None:

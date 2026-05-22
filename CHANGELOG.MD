@@ -1,5 +1,11 @@
 # Changelog
 
+## locale-lang-propagation — 2026-05-22
+
+Plan: unified `HecklerConfig.locale` propagates to Whisper `whisper_language` and Kokoro `kokoro_lang_code` via `heckler/locale.py`; operator entry `HECKLER_LOCALE` and persona `[voice].locale` (later subtasks). Full decomposition: `.dev/plans/locale-lang-propagation/plan.md`.
+
+- T1 (Locale module and config resolution): Added **`heckler/locale.py`** with **`SUPPORTED_LOCALES`**, **`normalize_locale`**, **`resolve_locale`**, and **`UnsupportedLocaleError`**; extended **`HecklerConfig`** with **`locale`** and **`kokoro_lang_code`**; **`apply_resolved_locale`** derives **`whisper_language`** / Kokoro code; **`load_config()`** reads **`HECKLER_LOCALE`** (strip, whitespace → **`en`**) and applies resolver. **`+`** **`tests/test_locale.py`**; extended **`tests/test_config.py`**. **Rationale:** Single operator knob keeps STT/TTS aligned at config construction instead of independent env vocabularies. **Decision log:** `.dev/decision-logs/locale-lang-propagation-T1.md`. **Deferred (adversarial §2.1):** no test that a hypothetical **`WHISPER_LANGUAGE`** env is ignored — v1 documents **`HECKLER_LOCALE`** only.
+
 ## capture-mic-gate-during-play — 2026-05-22
 
 Plan: capture-layer Rule 1 while `Speaker.is_playing` is set — discard VAD segment formation during TTS/playback/tail, reset `VADIterator` on unmute; retain emit-time skip as second defense. Full decomposition: `.dev/plans/capture-mic-gate-during-play/plan.md`.
