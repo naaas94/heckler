@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from heckler.audio_capture import AudioCapture
-from heckler.config import HecklerConfig
+from heckler.config import HecklerConfig, apply_resolved_locale
 from heckler.context_buffer import ContextBuffer
 from heckler.event_store import open_store
 from heckler.logger import HecklerLogger
@@ -109,27 +109,35 @@ class PipelineController:
         on_progress: Optional[Callable[[str], None]] = None,
         *,
         mode: Optional[str] = None,
+        persona_name: Optional[str] = None,
     ) -> None:
         """Load Transcriber; load Speaker unless ``mode="transcribe"``.
 
+        Heavy models snapshot locale from ``persona_name`` when provided (persona
+        ``[voice].locale`` merged via ``apply_persona_overrides``); otherwise
+        ``apply_resolved_locale(self._config)``. Call again after changing persona
+        or base locale if STT/TTS language must change — ``swap_persona`` does not
+        rebuild Transcriber/Speaker.
+
         Never call during mode switch or persona swap.
         """
+        model_cfg = self._heavy_model_config(persona_name)
 
         def _prog(msg: str) -> None:
             if on_progress is not None:
                 on_progress(msg)
 
         _prog(
-            f"Loading transcription model ({self._config.whisper_model_size} / CUDA)..."
+            f"Loading transcription model ({model_cfg.whisper_model_size} / CUDA)..."
         )
         t0 = time.perf_counter()
-        self._transcriber = Transcriber(self._config)
+        self._transcriber = Transcriber(model_cfg)
         _prog(f"Transcription ready. ({time.perf_counter() - t0:.1f}s)")
 
         if mode != "transcribe":
-            _prog(f"Loading TTS model (Kokoro / {self._config.kokoro_voice})...")
+            _prog(f"Loading TTS model (Kokoro / {model_cfg.kokoro_voice})...")
             t1 = time.perf_counter()
-            self._speaker = Speaker(self._config)
+            self._speaker = Speaker(model_cfg)
             _prog(f"TTS ready. ({time.perf_counter() - t1:.1f}s)")
 
     def start(
@@ -246,6 +254,12 @@ class PipelineController:
         self.start(new_mode, persona_name=persona_name, session_name=session_name)
 
     def swap_persona(self, persona_name: str) -> None:
+        """Hot-swap Reactor prompts/config gates only.
+
+        Does not rebuild ``Transcriber`` or ``Speaker``; STT/TTS language remains
+        whatever was fixed at the last ``load_models`` call. Reload models after
+        changing persona locale if Whisper/Kokoro language must align.
+        """
         if not self._running:
             raise PipelineNotRunningError("Cannot swap persona: pipeline is not running")
         if self._mode != "persona":
@@ -276,6 +290,13 @@ class PipelineController:
     # ------------------------------------------------------------------
     # Internal startup helpers
     # ------------------------------------------------------------------
+
+    def _heavy_model_config(self, persona_name: Optional[str]) -> HecklerConfig:
+        if persona_name:
+            prompts_root = Path(__file__).resolve().parent.parent / "prompts"
+            persona = load_persona(prompts_root / persona_name)
+            return apply_persona_overrides(self._config, persona)
+        return apply_resolved_locale(self._config)
 
     def _start_persona_mode(self, *, persona_name: Optional[str] = None) -> None:
         assert self._transcriber is not None, "load_models() must be called before start()"

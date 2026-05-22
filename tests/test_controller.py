@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from heckler.config import HecklerConfig
+from heckler.config import HecklerConfig, apply_resolved_locale
 from heckler.controller import (
     ControllerCallbacks,
     PipelineAlreadyRunningError,
@@ -199,6 +199,126 @@ def test_load_models_persona_loads_speaker(monkeypatch):
 
     assert ctrl._transcriber is mocks["transcriber"]
     assert ctrl._speaker is mocks["speaker"]
+
+
+class _ConfigCapturingTranscriber:
+    """Records the HecklerConfig passed at construction (locale bake tests)."""
+
+    instances: list["_ConfigCapturingTranscriber"] = []
+
+    def __init__(self, config: HecklerConfig) -> None:
+        self._config = config
+        _ConfigCapturingTranscriber.instances.append(self)
+
+
+class _ConfigCapturingSpeaker:
+    instances: list["_ConfigCapturingSpeaker"] = []
+
+    def __init__(self, config: HecklerConfig) -> None:
+        self._config = config
+        self.is_playing = threading.Event()
+        _ConfigCapturingSpeaker.instances.append(self)
+
+
+def test_load_models_persona_name_bakes_spanish_locale(monkeypatch):
+    """``load_models(persona_name=...)`` merges persona locale into heavy models."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    callbacks = _make_callbacks()
+    es_persona = Persona(
+        name="es-host",
+        description="",
+        system_prompt="Spanish host.",
+        examples=[],
+        config_overrides={"locale": "es"},
+    )
+
+    _ConfigCapturingTranscriber.instances.clear()
+    _ConfigCapturingSpeaker.instances.clear()
+
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr("heckler.controller.Speaker", _ConfigCapturingSpeaker)
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: es_persona,
+    )
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models(persona_name="es-host")
+
+    assert len(_ConfigCapturingTranscriber.instances) == 1
+    model_cfg = _ConfigCapturingTranscriber.instances[0]._config
+    assert model_cfg.locale == "es"
+    assert model_cfg.whisper_language == "es"
+    assert model_cfg.kokoro_lang_code == "e"
+    assert _ConfigCapturingSpeaker.instances[0]._config is model_cfg
+
+
+def test_load_models_without_persona_resolves_base_locale(monkeypatch):
+    """Default load applies ``apply_resolved_locale`` to base config (e.g. en-gb → b)."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en-gb")
+    callbacks = _make_callbacks()
+
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda _cfg: _ConfigCapturingSpeaker(_cfg),
+    )
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+
+    model_cfg = _ConfigCapturingTranscriber.instances[0]._config
+    expected = apply_resolved_locale(cfg)
+    assert model_cfg.whisper_language == expected.whisper_language
+    assert model_cfg.kokoro_lang_code == expected.kokoro_lang_code
+
+
+def test_swap_persona_does_not_change_transcriber_whisper_language(monkeypatch):
+    """Hot-swap updates Reactor only; Transcriber keeps load-time whisper_language."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    callbacks = _make_callbacks()
+
+    fake_en = _fake_persona("heckler")
+    fake_es = Persona(
+        name="es-host",
+        description="",
+        system_prompt="Spanish.",
+        examples=[],
+        config_overrides={"locale": "es"},
+    )
+    personas = {"heckler": fake_en, "es-host": fake_es}
+
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda cfg: _ConfigCapturingSpeaker(cfg),
+    )
+    monkeypatch.setattr("heckler.controller.AudioCapture", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr("heckler.controller.Reactor", lambda *a, **kw: MagicMock())
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda path: personas[path.name],
+    )
+    monkeypatch.setattr("heckler.controller.HecklerLogger", lambda _: MagicMock())
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+    assert ctrl._transcriber is not None
+    assert ctrl._transcriber._config.whisper_language == "en"
+
+    ctrl.start(mode="persona", persona_name="heckler")
+    ctrl.swap_persona("es-host")
+
+    assert ctrl._transcriber._config.whisper_language == "en"
+    ctrl.stop()
 
 
 def test_on_progress_includes_cuda_and_timing(monkeypatch):

@@ -10,6 +10,8 @@ Plan: unified `HecklerConfig.locale` propagates to Whisper `whisper_language` an
 
 - T2 (Speaker Kokoro lang from config): **`Speaker.__init__`** passes **`config.kokoro_lang_code`** into **`KPipeline`** instead of a hard-coded American English **`"a"`**; extended **`tests/test_speaker.py`** with locale-resolved init assertions. **Rationale:** Spanish (and other mapped) locales must use the matching Kokoro phonemizer, not English-by-default.
 
+- T4 (Controller load-time locale bake): **`load_models(..., persona_name=...)`** builds **`Transcriber`** / **`Speaker`** from **`_heavy_model_config`** (persona merge or **`apply_resolved_locale`**); **`swap_persona`** docstring states STT/TTS language stays load-time fixed. Extended **`tests/test_controller.py`** with persona-locale bake and hot-swap non-mutation falsifiers. **Rationale:** Closes Surface 1 — persona **`[voice].locale`** must affect Whisper/Kokoro when baked at load, not only worker/Reactor config. **Decision log:** `.dev/decision-logs/locale-lang-propagation-T4.md`. **Deferred (adversarial §2.1):** no test that calling **`load_models`** twice with different **`persona_name`** replaces an already-constructed transcriber — reload is explicit operator action.
+
 ## capture-mic-gate-during-play — 2026-05-22
 
 Plan: capture-layer Rule 1 while `Speaker.is_playing` is set — discard VAD segment formation during TTS/playback/tail, reset `VADIterator` on unmute; retain emit-time skip as second defense. Full decomposition: `.dev/plans/capture-mic-gate-during-play/plan.md`.
