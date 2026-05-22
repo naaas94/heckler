@@ -58,7 +58,7 @@ class HeckleEvent:
     passed_density_gate: bool
     reactor_result: Optional[ReactorResult]  # None if LLM errored
     passed_score_gate: Optional[bool]  # None if LLM errored
-    passed_pacing_gate: Optional[bool]  # None if score_gate failed
+    passed_pacing_gate: Optional[bool]  # None: not evaluated (LLM/score gate); False: failed; True: passed
     spoken: bool
     discard_reason: Optional[DiscardReason]
     cooldown_remaining_at_eval: Optional[float]

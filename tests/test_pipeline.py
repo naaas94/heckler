@@ -24,6 +24,14 @@ from heckler.pipeline import (
 from heckler.transcript_store import close_session, create_session, init_transcript_schema
 
 
+def _reaction_worker_pacing_mock(
+    *, in_cooldown: bool = False, cooldown_remaining: float = 0.0
+) -> MagicMock:
+    pg = MagicMock()
+    pg.cooldown_status.return_value = (in_cooldown, cooldown_remaining)
+    return pg
+
+
 def _audio_utt(transcript: str) -> Utterance:
     chunk = AudioChunk(audio=np.zeros(8, dtype=np.float32), captured_at=0.0)
     return Utterance(
@@ -245,7 +253,7 @@ def test_reaction_worker_falls_back_to_llm_error_when_react_returns_none_triple(
     _run_reaction_worker(
         context_buffer=context_buffer,
         reactor_holder=ReactorHolder(reactor),
-        pacing_gate=MagicMock(),
+        pacing_gate=_reaction_worker_pacing_mock(),
         speaker=MagicMock(),
         heckler_logger=heckler_logger,
         reaction_queue=reaction_queue,
@@ -317,7 +325,7 @@ def test_reaction_worker_calls_reactor_react_directly():
     _run_reaction_worker(
         context_buffer=context_buffer,
         reactor_holder=ReactorHolder(reactor),
-        pacing_gate=MagicMock(),
+        pacing_gate=_reaction_worker_pacing_mock(),
         speaker=MagicMock(),
         heckler_logger=heckler_logger,
         reaction_queue=reaction_queue,
@@ -348,7 +356,7 @@ def test_reaction_worker_maps_score_gate_discard_reason():
     _run_reaction_worker(
         context_buffer=context_buffer,
         reactor_holder=ReactorHolder(reactor),
-        pacing_gate=MagicMock(),
+        pacing_gate=_reaction_worker_pacing_mock(),
         speaker=MagicMock(),
         heckler_logger=heckler_logger,
         reaction_queue=reaction_queue,
@@ -907,7 +915,7 @@ def test_reaction_worker_success_path_without_wrapper():
     reactor = MagicMock()
     reactor.react.return_value = (rr, 8.0, None)
 
-    pacing_gate = MagicMock()
+    pacing_gate = _reaction_worker_pacing_mock()
     pacing_gate.evaluate.return_value = (True, 0.0)
 
     speaker = MagicMock()
@@ -934,6 +942,43 @@ def test_reaction_worker_success_path_without_wrapper():
     assert logged[0].discard_reason is None
 
 
+def test_reaction_worker_pre_llm_pacing_skips_react():
+    """Pre-LLM cooldown must not call ``react`` or ``on_reaction``."""
+    reaction_queue: queue.Queue = queue.Queue()
+    utt = _audio_utt("during cooldown")
+    reaction_queue.put(utt)
+    reaction_queue.put(None)
+
+    reactor = MagicMock()
+    pacing_gate = _reaction_worker_pacing_mock(in_cooldown=True, cooldown_remaining=3.5)
+    heckler_logger = MagicMock()
+    context_buffer = MagicMock()
+    on_reaction = MagicMock()
+
+    _run_reaction_worker(
+        context_buffer=context_buffer,
+        reactor_holder=ReactorHolder(reactor),
+        pacing_gate=pacing_gate,
+        speaker=MagicMock(),
+        heckler_logger=heckler_logger,
+        reaction_queue=reaction_queue,
+        on_reaction=on_reaction,
+    )
+
+    reactor.react.assert_not_called()
+    pacing_gate.evaluate.assert_not_called()
+    on_reaction.assert_not_called()
+    context_buffer.push.assert_called_once_with("during cooldown")
+    event = heckler_logger.log_event.call_args[0][0]
+    assert event.reactor_result is None
+    assert event.passed_score_gate is None
+    assert event.passed_pacing_gate is False
+    assert event.discard_reason == DiscardReason.PACING_GATE
+    assert event.cooldown_remaining_at_eval == 3.5
+    assert event.llm_latency_ms is None
+    assert event.tts_latency_ms is None
+
+
 def test_reaction_worker_pacing_gate_after_successful_react():
     """If ``react`` succeeds but pacing rejects, event must record ``PACING_GATE``."""
     reaction_queue: queue.Queue = queue.Queue()
@@ -950,7 +995,7 @@ def test_reaction_worker_pacing_gate_after_successful_react():
     reactor = MagicMock()
     reactor.react.return_value = (rr, 7.0, None)
 
-    pacing_gate = MagicMock()
+    pacing_gate = _reaction_worker_pacing_mock()
     pacing_gate.evaluate.return_value = (False, 2.5)
 
     heckler_logger = MagicMock()
@@ -966,6 +1011,7 @@ def test_reaction_worker_pacing_gate_after_successful_react():
         reaction_queue=reaction_queue,
     )
 
+    pacing_gate.cooldown_status.assert_called_once()
     pacing_gate.evaluate.assert_called_once_with(0.95)
     event = heckler_logger.log_event.call_args[0][0]
     assert event.discard_reason == DiscardReason.PACING_GATE

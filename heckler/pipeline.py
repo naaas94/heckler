@@ -176,6 +176,28 @@ def _run_reaction_worker(
         if utterance is None:
             break
         try:
+            in_cooldown, cooldown_remaining = pacing_gate.cooldown_status()
+            if in_cooldown:
+                heckler_logger.log_event(
+                    HeckleEvent(
+                        utterance_id=utterance.utterance_id,
+                        timestamp_iso=_now_iso(),
+                        transcript=utterance.transcript,
+                        semantic_density=utterance.semantic_density,
+                        passed_density_gate=True,
+                        reactor_result=None,
+                        passed_score_gate=None,
+                        passed_pacing_gate=False,
+                        spoken=False,
+                        discard_reason=DiscardReason.PACING_GATE,
+                        cooldown_remaining_at_eval=cooldown_remaining,
+                        llm_latency_ms=None,
+                        tts_latency_ms=None,
+                    )
+                )
+                context_buffer.push(utterance.transcript)
+                continue
+
             reactor = reactor_holder.get()
             context_block = context_buffer.get_context_block()
             result, llm_latency_ms, discard_reason = reactor.react(
