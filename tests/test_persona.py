@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from heckler.config import HecklerConfig
+from heckler.locale import UnsupportedLocaleError
 from heckler.persona import (
     Persona,
     PersonaNotFoundError,
@@ -235,6 +236,62 @@ def test_list_personas_missing_root_returns_empty(tmp_path) -> None:
     assert list_personas(tmp_path / "missing_prompts") == []
 
 
+def test_load_persona_flattens_voice_locale(tmp_path) -> None:
+    d = tmp_path / "es_voice"
+    d.mkdir()
+    (d / "system.md").write_text("x", encoding="utf-8")
+    (d / "persona.toml").write_text(
+        textwrap.dedent(
+            """
+            [persona]
+            name = "Es"
+            description = ""
+
+            [voice]
+            locale = "es"
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    p = load_persona(d)
+    assert p.config_overrides == {"locale": "es"}
+
+
+def test_apply_persona_overrides_resolves_spanish_locale(tmp_path) -> None:
+    d = tmp_path / "es_merge"
+    _write_minimal_persona(
+        d,
+        extra_toml=textwrap.dedent(
+            """
+            [voice]
+            locale = "es"
+            """
+        ),
+    )
+    p = load_persona(d)
+    base = HecklerConfig(locale="en", whisper_language="en", kokoro_lang_code="a")
+    merged = apply_persona_overrides(base, p)
+    assert merged.locale == "es"
+    assert merged.whisper_language == "es"
+    assert merged.kokoro_lang_code == "e"
+
+
+def test_apply_persona_overrides_rejects_unknown_locale(tmp_path) -> None:
+    d = tmp_path / "bad_locale"
+    _write_minimal_persona(
+        d,
+        extra_toml=textwrap.dedent(
+            """
+            [voice]
+            locale = "xx"
+            """
+        ),
+    )
+    p = load_persona(d)
+    with pytest.raises(UnsupportedLocaleError):
+        apply_persona_overrides(HecklerConfig(), p)
+
+
 def test_apply_persona_overrides_applies_known_fields(tmp_path) -> None:
     d = tmp_path / "ov"
     _write_minimal_persona(
@@ -300,6 +357,7 @@ def test_apply_persona_overrides_each_mapping_table_field(tmp_path) -> None:
             [voice]
             kokoro_voice = "af_x"
             kokoro_speed = 1.11
+            locale = "es"
 
             [llm]
             model = "openai/m"
@@ -318,6 +376,9 @@ def test_apply_persona_overrides_each_mapping_table_field(tmp_path) -> None:
     p = load_persona(d)
     base = HecklerConfig()
     merged = apply_persona_overrides(base, p)
+    assert merged.locale == "es"
+    assert merged.whisper_language == "es"
+    assert merged.kokoro_lang_code == "e"
     assert merged.kokoro_voice == "af_x"
     assert merged.kokoro_speed == 1.11
     assert merged.llm_model == "openai/m"

@@ -7,7 +7,7 @@ from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
-from heckler.config import HecklerConfig
+from heckler.config import HecklerConfig, apply_resolved_locale
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ class Persona:
 _TOML_TO_CONFIG: dict[tuple[str, str], str] = {
     ("voice", "kokoro_voice"): "kokoro_voice",
     ("voice", "kokoro_speed"): "kokoro_speed",
+    ("voice", "locale"): "locale",
     ("llm", "model"): "llm_model",
     ("llm", "temperature"): "llm_temperature",
     ("llm", "max_tokens"): "llm_max_tokens",
@@ -125,4 +126,4 @@ def apply_persona_overrides(base: HecklerConfig, persona: Persona) -> HecklerCon
                 persona.name,
                 key,
             )
-    return replace(base, **valid_overrides)
+    return apply_resolved_locale(replace(base, **valid_overrides))
