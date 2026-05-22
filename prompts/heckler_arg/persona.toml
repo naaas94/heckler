@@ -4,7 +4,7 @@ description = "Comentarista seco y de cara de piedra"
 
 [voice]
 locale = "es"
-kokoro_voice = "af_sarah"
+kokoro_voice = "ef_dora"
 kokoro_speed = 1.05
 
 [llm]
