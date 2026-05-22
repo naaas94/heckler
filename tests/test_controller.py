@@ -19,7 +19,9 @@ from heckler.controller import (
     PipelineController,
     PipelineNotRunningError,
     ReactorHolder,
+    SpeechReloadPolicy,
 )
+from heckler.locale import speech_stack_signature
 from heckler.models import AudioChunk, CommentType, ReactorResult, Utterance
 from heckler.persona import Persona
 
@@ -656,6 +658,272 @@ def test_pipeline_not_running_error_is_runtime_error():
 
 def test_pipeline_already_running_error_is_runtime_error():
     assert issubclass(PipelineAlreadyRunningError, RuntimeError)
+
+
+# ---------------------------------------------------------------------------
+# T2 — speech reload API (persona-speech-reload)
+# ---------------------------------------------------------------------------
+
+
+def test_speech_reload_policy_values():
+    assert SpeechReloadPolicy.auto.value == "auto"
+    assert SpeechReloadPolicy.ask.value == "ask"
+    assert SpeechReloadPolicy.never.value == "never"
+    assert set(SpeechReloadPolicy) == {
+        SpeechReloadPolicy.auto,
+        SpeechReloadPolicy.ask,
+        SpeechReloadPolicy.never,
+    }
+
+
+def test_loaded_speech_stack_none_without_models():
+    cfg = HecklerConfig(anthropic_api_key="k")
+    ctrl = PipelineController(cfg, _make_callbacks())
+    assert ctrl.loaded_speech_stack() is None
+
+
+def test_loaded_speech_stack_returns_signature_after_load(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en-gb")
+    callbacks = _make_callbacks()
+
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda c: _ConfigCapturingSpeaker(c),
+    )
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+    assert ctrl.loaded_speech_stack() == ("en", "b")
+
+
+def test_target_speech_config_persona_merge(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    es_persona = Persona(
+        name="es-host",
+        description="",
+        system_prompt="Spanish.",
+        examples=[],
+        config_overrides={"locale": "es"},
+    )
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: es_persona,
+    )
+
+    ctrl = PipelineController(cfg, _make_callbacks())
+    target = ctrl.target_speech_config(persona_name="es-host")
+    assert target.locale == "es"
+    assert target.whisper_language == "es"
+    assert target.kokoro_lang_code == "e"
+
+
+def test_target_speech_config_locale_override(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: _fake_persona("heckler"),
+    )
+
+    ctrl = PipelineController(cfg, _make_callbacks())
+    target = ctrl.target_speech_config(
+        persona_name="heckler", locale_override="en-gb"
+    )
+    assert target.locale == "en-gb"
+    assert speech_stack_signature(target) == ("en", "b")
+
+
+def test_target_speech_config_empty_locale_override_ignored(monkeypatch):
+    """Empty locale_override is falsy — same as None (sentinel rule)."""
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: _fake_persona("heckler"),
+    )
+
+    ctrl = PipelineController(cfg, _make_callbacks())
+    with_none = ctrl.target_speech_config(persona_name="heckler", locale_override=None)
+    with_empty = ctrl.target_speech_config(persona_name="heckler", locale_override="")
+    assert speech_stack_signature(with_none) == speech_stack_signature(with_empty)
+
+
+def test_heavy_models_need_reload_when_none_loaded():
+    cfg = HecklerConfig(anthropic_api_key="k")
+    ctrl = PipelineController(cfg, _make_callbacks())
+    assert ctrl.heavy_models_need_reload(persona_name=None) is True
+
+
+def test_heavy_models_need_reload_false_when_signature_matches(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    callbacks = _make_callbacks()
+
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda c: _ConfigCapturingSpeaker(c),
+    )
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+    assert ctrl.heavy_models_need_reload(persona_name=None) is False
+
+
+def test_heavy_models_need_reload_true_when_signature_differs(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    es_persona = Persona(
+        name="es-host",
+        description="",
+        system_prompt="Spanish.",
+        examples=[],
+        config_overrides={"locale": "es"},
+    )
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: es_persona,
+    )
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+    assert ctrl.heavy_models_need_reload(persona_name="es-host") is True
+
+
+def test_ensure_heavy_models_calls_load_when_needed(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k")
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    ctrl = PipelineController(cfg, callbacks)
+    assert ctrl.ensure_heavy_models(persona_name=None) is True
+    assert ctrl._transcriber is not None
+
+
+def test_ensure_heavy_models_skips_when_signature_matches(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    callbacks = _make_callbacks()
+
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda c: _ConfigCapturingSpeaker(c),
+    )
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+    first_transcriber = ctrl._transcriber
+    load_count_before = len(_ConfigCapturingTranscriber.instances)
+    assert ctrl.ensure_heavy_models(persona_name=None) is False
+    assert ctrl._transcriber is first_transcriber
+    assert len(_ConfigCapturingTranscriber.instances) == load_count_before
+
+
+def test_reload_speech_stack_not_running_does_not_start(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k")
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    ctrl = PipelineController(cfg, callbacks)
+    start_calls: list[str] = []
+    original_start = ctrl.start
+
+    def _track_start(mode: str, **kwargs: object) -> None:
+        start_calls.append(mode)
+        original_start(mode, **kwargs)
+
+    monkeypatch.setattr(ctrl, "start", _track_start)
+    ctrl.reload_speech_stack_for_persona(persona_name=None)
+
+    assert start_calls == []
+    assert not ctrl.is_running
+    assert ctrl._transcriber is not None
+
+
+def test_reload_speech_stack_running_restarts(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k")
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models()
+    ctrl.start(mode="persona", persona_name="heckler")
+    assert ctrl.is_running
+
+    ctrl.reload_speech_stack_for_persona(persona_name="heckler")
+    assert ctrl.is_running
+    assert ctrl.current_mode == "persona"
+
+
+def test_load_models_locale_override_matches_target_speech_config(monkeypatch):
+    cfg = HecklerConfig(anthropic_api_key="k", locale="en")
+    es_persona = Persona(
+        name="es-host",
+        description="",
+        system_prompt="Spanish.",
+        examples=[],
+        config_overrides={"locale": "es"},
+    )
+    monkeypatch.setattr(
+        "heckler.controller.load_persona",
+        lambda _path: es_persona,
+    )
+
+    _ConfigCapturingTranscriber.instances.clear()
+    monkeypatch.setattr(
+        "heckler.controller.Transcriber", _ConfigCapturingTranscriber
+    )
+    monkeypatch.setattr(
+        "heckler.controller.Speaker",
+        lambda cfg: _ConfigCapturingSpeaker(cfg),
+    )
+
+    ctrl = PipelineController(cfg, _make_callbacks())
+    expected = ctrl.target_speech_config(
+        persona_name="es-host", locale_override="en-gb"
+    )
+    ctrl.load_models(persona_name="es-host", locale_override="en-gb")
+    loaded_cfg = _ConfigCapturingTranscriber.instances[0]._config
+    assert speech_stack_signature(loaded_cfg) == speech_stack_signature(expected)
+    assert loaded_cfg.locale == "en-gb"
+
+
+def test_switch_mode_to_persona_ensures_speaker(monkeypatch, tmp_path):
+    """Transcribe → persona switch loads Speaker via ensure_heavy_models (G2)."""
+    db_path = tmp_path / "t.db"
+    cfg = HecklerConfig(anthropic_api_key="k", sqlite_database_path=str(db_path))
+    callbacks = _make_callbacks()
+    _build_controller_mocks(monkeypatch, cfg, callbacks)
+
+    monkeypatch.setattr(
+        "heckler.controller.open_store",
+        lambda _p: __import__("sqlite3").connect(":memory:", check_same_thread=False),
+    )
+    monkeypatch.setattr("heckler.controller.init_transcript_schema", lambda _c: None)
+    monkeypatch.setattr("heckler.controller.create_session", lambda *a, **kw: None)
+    monkeypatch.setattr("heckler.controller.close_session", lambda *a, **kw: None)
+    monkeypatch.setattr("heckler.controller.export_session_markdown", lambda *a, **kw: None)
+
+    ctrl = PipelineController(cfg, callbacks)
+    ctrl.load_models(mode="transcribe")
+    assert ctrl._speaker is None
+    ctrl.start(mode="transcribe")
+
+    ctrl.switch_mode("persona", persona_name="heckler")
+
+    assert ctrl.is_running
+    assert ctrl.current_mode == "persona"
+    assert ctrl._speaker is not None
+
+    ctrl.stop()
 
 
 # ---------------------------------------------------------------------------

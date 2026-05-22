@@ -1,3 +1,8 @@
+> **SUPERSEDED** by `persona-speech-reload` plan (2026-05-22).
+> Decision: `swap_persona` now performs conditional rebuild when speech-stack signature changes.
+> See `.dev/decision-logs/persona-speech-reload-T2.md` for the landed behavior.
+> The "swap never rebuilds" statement below describes pre-T2 behavior only.
+
 # locale-lang-propagation — T4 — controller load-time locale bake
 
 ## Chosen approach

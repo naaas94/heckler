@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import enum
 import logging
 import queue
 import sqlite3
@@ -46,6 +47,12 @@ class PipelineNotRunningError(RuntimeError):
 
 class PipelineAlreadyRunningError(RuntimeError):
     """Raised when start() is called while the pipeline is already running."""
+
+
+class SpeechReloadPolicy(str, enum.Enum):
+    auto = "auto"
+    ask = "ask"
+    never = "never"
 
 
 @dataclass
@@ -110,18 +117,21 @@ class PipelineController:
         *,
         mode: Optional[str] = None,
         persona_name: Optional[str] = None,
+        locale_override: Optional[str] = None,
     ) -> None:
         """Load Transcriber; load Speaker unless ``mode="transcribe"``.
 
-        Heavy models snapshot locale from ``persona_name`` when provided (persona
-        ``[voice].locale`` merged via ``apply_persona_overrides``); otherwise
-        ``apply_resolved_locale(self._config)``. Call again after changing persona
-        or base locale if STT/TTS language must change — ``swap_persona`` does not
-        rebuild Transcriber/Speaker.
+        Heavy models use ``target_speech_config`` (persona merge, optional
+        ``locale_override``, or base ``apply_resolved_locale``). Call again when
+        the speech-stack signature changes — ``swap_persona`` does not rebuild
+        Transcriber/Speaker (caller must guarantee unchanged signature).
 
-        Never call during mode switch or persona swap.
+        Never call during mode switch or persona swap except via
+        ``reload_speech_stack_for_persona`` / ``ensure_heavy_models``.
         """
-        model_cfg = self._heavy_model_config(persona_name)
+        model_cfg = self.target_speech_config(
+            persona_name=persona_name, locale_override=locale_override
+        )
 
         def _prog(msg: str) -> None:
             if on_progress is not None:
@@ -139,6 +149,90 @@ class PipelineController:
             t1 = time.perf_counter()
             self._speaker = Speaker(model_cfg)
             _prog(f"TTS ready. ({time.perf_counter() - t1:.1f}s)")
+
+        logger.info(
+            "Speech stack loaded for %r (%s/%s)",
+            persona_name,
+            model_cfg.whisper_language,
+            model_cfg.kokoro_lang_code,
+        )
+
+    def loaded_speech_stack(self) -> tuple[str, str] | None:
+        if self._transcriber is None:
+            return None
+        from heckler.locale import speech_stack_signature
+
+        return speech_stack_signature(self._transcriber._config)
+
+    def target_speech_config(
+        self,
+        *,
+        persona_name: Optional[str],
+        locale_override: Optional[str] = None,
+    ) -> HecklerConfig:
+        base = self._config
+        if persona_name:
+            prompts_root = Path(__file__).resolve().parent.parent / "prompts"
+            persona = load_persona(prompts_root / persona_name)
+            cfg = apply_persona_overrides(base, persona)
+        else:
+            cfg = apply_resolved_locale(base)
+        if locale_override:
+            cfg = apply_resolved_locale(dataclasses.replace(cfg, locale=locale_override))
+        return cfg
+
+    def heavy_models_need_reload(
+        self,
+        *,
+        persona_name: Optional[str],
+        locale_override: Optional[str] = None,
+    ) -> bool:
+        from heckler.locale import speech_stack_signature
+
+        target = self.target_speech_config(
+            persona_name=persona_name, locale_override=locale_override
+        )
+        loaded = self.loaded_speech_stack()
+        return loaded is None or speech_stack_signature(target) != loaded
+
+    def ensure_heavy_models(
+        self,
+        *,
+        persona_name: Optional[str],
+        locale_override: Optional[str] = None,
+        on_progress: Optional[Callable[[str], None]] = None,
+        mode: str = "persona",
+    ) -> bool:
+        if self.heavy_models_need_reload(
+            persona_name=persona_name, locale_override=locale_override
+        ):
+            self.load_models(
+                on_progress=on_progress,
+                mode=mode,
+                persona_name=persona_name,
+                locale_override=locale_override,
+            )
+            return True
+        return False
+
+    def reload_speech_stack_for_persona(
+        self,
+        *,
+        persona_name: Optional[str],
+        locale_override: Optional[str] = None,
+        on_progress: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        was_running = self._running
+        if was_running:
+            self.stop()
+        self.load_models(
+            on_progress=on_progress,
+            mode="persona",
+            persona_name=persona_name,
+            locale_override=locale_override,
+        )
+        if was_running:
+            self.start("persona", persona_name=persona_name)
 
     def start(
         self,
@@ -251,14 +345,20 @@ class PipelineController:
             raise PipelineNotRunningError("Cannot switch mode: pipeline is not running")
         logger.info("PipelineController switching from %r to %r", self._mode, new_mode)
         self.stop()
+        if new_mode == "persona":
+            self.ensure_heavy_models(
+                persona_name=persona_name,
+                locale_override=None,
+                mode="persona",
+            )
         self.start(new_mode, persona_name=persona_name, session_name=session_name)
 
     def swap_persona(self, persona_name: str) -> None:
-        """Hot-swap Reactor prompts/config gates only.
+        """Hot-swap Reactor prompts/config gates only (same speech-stack signature).
 
-        Does not rebuild ``Transcriber`` or ``Speaker``; STT/TTS language remains
-        whatever was fixed at the last ``load_models`` call. Reload models after
-        changing persona locale if Whisper/Kokoro language must align.
+        Caller guarantees speech-stack signature is unchanged; raises
+        ``PipelineNotRunningError`` if not running. Cross-locale reload is handled
+        by GUI ``_apply_persona_and_speech`` (not ``swap_persona``).
         """
         if not self._running:
             raise PipelineNotRunningError("Cannot swap persona: pipeline is not running")
@@ -290,13 +390,6 @@ class PipelineController:
     # ------------------------------------------------------------------
     # Internal startup helpers
     # ------------------------------------------------------------------
-
-    def _heavy_model_config(self, persona_name: Optional[str]) -> HecklerConfig:
-        if persona_name:
-            prompts_root = Path(__file__).resolve().parent.parent / "prompts"
-            persona = load_persona(prompts_root / persona_name)
-            return apply_persona_overrides(self._config, persona)
-        return apply_resolved_locale(self._config)
 
     def _start_persona_mode(self, *, persona_name: Optional[str] = None) -> None:
         assert self._transcriber is not None, "load_models() must be called before start()"
