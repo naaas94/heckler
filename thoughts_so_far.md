@@ -24,9 +24,3 @@
 
 
 - Eval: SQLite events + `.dev/eval-strategy.md` landed; still need label workflow (`heckler_eval_labels` has no writer) and semantic surface analysis
-
-
-- GUI trait/character mix toggles (persona combo + locale override + speech reload done; not ad-hoc trait sliders)
-
-
-- Quick-shot questions and interview support
